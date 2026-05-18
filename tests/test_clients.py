@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -39,8 +40,8 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 # test modules can coexist in a single pytest run without port collisions and
 # without test_broker's per-test broker stomping on the long-lived broker
 # that this module needs for the connect.py background thread.
-UI_PORT = 18775
-INST_PORT = 18776
+UI_PORT = int(os.environ.get("MESH_TEST_CLIENTS_UI_PORT", "18775"))
+INST_PORT = int(os.environ.get("MESH_TEST_CLIENTS_INST_PORT", "18776"))
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"

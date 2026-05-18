@@ -1029,6 +1029,38 @@ class Broker:
                         "value": bool(msg.get("value", False)),
                     })
 
+                elif mtype == "log":
+                    if not instance_id:
+                        continue
+                    text = (msg.get("text") or "").strip()
+                    if not text:
+                        continue
+                    level = (msg.get("level") or "info").lower()
+                    if level not in ("info", "warn", "error", "debug"):
+                        level = "info"
+                    truncated = text[:200]
+                    detail = f"{level}: {truncated}"
+                    async with self.lock:
+                        entry = self.audit(instance_id, "log", detail)
+                        self.schedule_write()
+                    # write to python logger at matching level
+                    py_level = {
+                        "info": log.info,
+                        "warn": log.warning,
+                        "error": log.error,
+                        "debug": log.debug,
+                    }[level]
+                    py_level(f"[{instance_id}] {truncated}")
+                    # broadcast a log_event to the UI (AUDIT tab); no chat, no state_update
+                    await self.broadcast_ui({
+                        "type": "log_event",
+                        "id": instance_id,
+                        "level": level,
+                        "text": truncated,
+                        "audit": entry,
+                        "ts": now_iso(),
+                    })
+
                 elif mtype == "task_create":
                     if not instance_id:
                         continue
