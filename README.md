@@ -123,6 +123,8 @@ Tests spin the broker up on alternate ports (18765/18766), so they're safe to ru
 - **Banner doesn't appear.** Use `python3 -u broker.py` — stdout buffering can hide the print until the first message.
 - **Instance won't reconnect.** `connect.py` auto-reconnects with exponential backoff capped at 30s. If a reconnect storm starts, kill and re-run it.
 - **`state.json` looks corrupted.** Delete or rename it — the broker will start with an empty state on next launch. (It also auto-backs-up to `state.json.bak` on read failure.)
+- **Schema migrations.** State carries a `schema_version` (currently `2`). Older state files are migrated in-place on load; a pre-migration copy is written to `state.json.v<source>.bak`. Each migration writes an `audit` entry with `action="migration"`.
+- **Daily backups.** The broker writes a dated copy of `state.json` (e.g. `state.json.2026-05-17.bak`) once every 24h and keeps only the 7 most recent. Pruned files are recorded in the audit log as `backup_pruned`.
 - **WebSocket connect fails from a remote browser.** The UI uses `ws://<location.host>/ui`, so the WS port is implicit — just make sure 8765 is reachable, not 8766. Agent-to-agent traffic stays on localhost.
 
 ## File map
@@ -135,6 +137,6 @@ agent-mesh/
 ├── index.html         # Full UI — single self-contained file
 ├── state.json         # Persisted state (created on first run)
 ├── tests/
-│   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+│   └── test_broker.py # tests covering relay/persistence/reconnect/migration/backups
 └── README.md
 ```

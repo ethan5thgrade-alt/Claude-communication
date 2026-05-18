@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 from collections import defaultdict, deque
@@ -25,6 +26,10 @@ INDEX_PATH = ROOT / "index.html"
 UI_PORT = 8765
 INSTANCE_PORT = 8766
 
+CURRENT_SCHEMA_VERSION = 2
+DEFAULT_BACKUP_INTERVAL_SECONDS = 86400  # 24h
+MAX_DATED_BACKUPS = 7
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -32,6 +37,7 @@ def now_iso() -> str:
 
 def empty_state() -> dict:
     return {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "messages": [],
         "tasks": [],
         "memory": [],
@@ -44,12 +50,49 @@ def empty_state() -> dict:
     }
 
 
+def _migrate_v1_to_v2(state: dict) -> dict:
+    """v1 (no schema_version) -> v2: ensure instances_meta, counters, created_by on tasks."""
+    state.setdefault("instances_meta", {})
+    counters = state.setdefault("counters", {})
+    for prefix, default in {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0}.items():
+        counters.setdefault(prefix, default)
+    for t in state.get("tasks", []):
+        if "created_by" not in t:
+            t["created_by"] = "unknown"
+    state["schema_version"] = 2
+    return state
+
+
+# ordered chain of migrators, indexed by source version
+_MIGRATIONS = {
+    1: _migrate_v1_to_v2,
+}
+
+
+def _migrate_state(state: dict) -> tuple[dict, list[int]]:
+    """Run any needed migrations. Returns (migrated_state, list_of_source_versions_applied)."""
+    applied: list[int] = []
+    while True:
+        version = state.get("schema_version", 1)
+        if version >= CURRENT_SCHEMA_VERSION:
+            break
+        migrator = _MIGRATIONS.get(version)
+        if migrator is None:
+            log.warning(f"No migrator for schema_version={version}; stopping at {version}")
+            break
+        state = migrator(state)
+        applied.append(version)
+    return state, applied
+
+
 class Broker:
     def __init__(self, ui_port: int = UI_PORT, instance_port: int = INSTANCE_PORT,
-                 state_path: Path = STATE_PATH):
+                 state_path: Path = STATE_PATH,
+                 backup_interval_seconds: float = DEFAULT_BACKUP_INTERVAL_SECONDS):
         self.ui_port = ui_port
         self.instance_port = instance_port
         self.state_path = state_path
+        self.backup_interval_seconds = backup_interval_seconds
 
         self.lock = asyncio.Lock()
         self.state: dict = empty_state()
@@ -62,11 +105,58 @@ class Broker:
         self.backlog: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
 
         self._write_task: Optional[asyncio.Task] = None
+        self._backup_task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._ws_server = None
         self._http_runner = None
 
     # ------------------- state persistence -------------------
+    def _pre_migration_backup(self, source_version: int) -> None:
+        """Copy state.json to state.json.v<source>.bak before applying migration."""
+        try:
+            backup_path = self.state_path.with_name(
+                self.state_path.name + f".v{source_version}.bak"
+            )
+            shutil.copy(self.state_path, backup_path)
+            log.info(f"Pre-migration backup written: {backup_path}")
+        except Exception as e:
+            log.warning(f"Pre-migration backup failed: {e}")
+
+    def _enforce_counter_integrity(self) -> None:
+        """Scan all entities, ensure counters >= max observed numeric suffix per prefix."""
+        # Map from prefix -> list of id-bearing collections
+        collections: dict[str, list] = {
+            "M": self.state.get("memory", []),
+            "T": self.state.get("tasks", []),
+            "F": self.state.get("flows", []),
+            "AP": self.state.get("approvals", []),
+            "V": self.state.get("votes", []),
+            "A": self.state.get("audit", []),
+        }
+        counters = self.state.setdefault("counters", {})
+        # Pattern: longest prefix first to avoid AP matching A
+        for prefix in sorted(collections.keys(), key=len, reverse=True):
+            items = collections[prefix]
+            pat = re.compile(rf"^{re.escape(prefix)}(\d+)$")
+            max_seen = 0
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                m = pat.match(str(it.get("id", "")))
+                if m:
+                    try:
+                        n = int(m.group(1))
+                        if n > max_seen:
+                            max_seen = n
+                    except ValueError:
+                        pass
+            current = counters.get(prefix, 0)
+            if max_seen > current:
+                log.warning(
+                    f"Counter integrity: {prefix} counter={current} but max ID={max_seen}; bumping"
+                )
+                counters[prefix] = max_seen
+
     def load_state(self):
         if not self.state_path.exists():
             self.state = empty_state()
@@ -74,11 +164,6 @@ class Broker:
         try:
             with open(self.state_path, "r") as f:
                 data = json.load(f)
-            base = empty_state()
-            base.update(data)
-            for k, v in empty_state()["counters"].items():
-                base["counters"].setdefault(k, v)
-            self.state = base
         except Exception as e:
             log.warning(f"Corrupt state.json ({e}); backing up and starting fresh")
             try:
@@ -86,6 +171,41 @@ class Broker:
             except Exception:
                 pass
             self.state = empty_state()
+            return
+
+        # Detect source version (anything without schema_version is implicit v1)
+        source_version = data.get("schema_version", 1)
+        needs_migration = source_version < CURRENT_SCHEMA_VERSION
+
+        if needs_migration:
+            self._pre_migration_backup(source_version)
+
+        # Merge with empty_state defaults so any newly-introduced top-level keys exist
+        base = empty_state()
+        base.update(data)
+        # ensure counters dict has all known prefixes
+        for k, v in empty_state()["counters"].items():
+            base["counters"].setdefault(k, v)
+        # honor the loaded source version for migration decisions
+        base["schema_version"] = source_version
+
+        migrated_state, applied = _migrate_state(base)
+        self.state = migrated_state
+
+        # Counter integrity check after migration (so v1 tasks etc. are visible)
+        self._enforce_counter_integrity()
+
+        # Audit any applied migrations (after counter check so the audit ID is safe)
+        for src_v in applied:
+            self.audit(
+                "system",
+                "migration",
+                f"v{src_v}->v{src_v + 1}",
+            )
+
+        if applied:
+            # persist post-migration state on next opportunity
+            self.schedule_write()
 
     async def _do_write(self):
         await asyncio.sleep(0.5)
@@ -102,6 +222,73 @@ class Broker:
     def schedule_write(self):
         if self._write_task is None or self._write_task.done():
             self._write_task = asyncio.create_task(self._do_write())
+
+    # ------------------- daily backup -------------------
+    _DATED_BACKUP_RE = re.compile(r"^state\.json\.(\d{4}-\d{2}-\d{2})\.bak$")
+
+    def _write_dated_backup(self) -> Optional[Path]:
+        """Copy current state.json to state.json.YYYY-MM-DD.bak; return its path."""
+        if not self.state_path.exists():
+            return None
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        backup_path = self.state_path.with_name(
+            self.state_path.name + f".{date_str}.bak"
+        )
+        try:
+            shutil.copy(self.state_path, backup_path)
+            return backup_path
+        except Exception as e:
+            log.warning(f"Dated backup failed: {e}")
+            return None
+
+    def _prune_dated_backups(self) -> list[Path]:
+        """Keep only the newest MAX_DATED_BACKUPS dated backups; return paths deleted."""
+        parent = self.state_path.parent
+        base_name = self.state_path.name
+        candidates: list[Path] = []
+        prefix = base_name + "."
+        for p in parent.iterdir():
+            name = p.name
+            if not name.startswith(prefix):
+                continue
+            rest = name[len(prefix):]
+            m = re.match(r"^(\d{4}-\d{2}-\d{2})\.bak$", rest)
+            if m:
+                candidates.append(p)
+        # Sort by date string (lexicographic == chronological for YYYY-MM-DD)
+        candidates.sort(key=lambda p: p.name)
+        deleted: list[Path] = []
+        while len(candidates) > MAX_DATED_BACKUPS:
+            oldest = candidates.pop(0)
+            try:
+                oldest.unlink()
+                deleted.append(oldest)
+            except Exception as e:
+                log.warning(f"Failed to delete old backup {oldest}: {e}")
+        if deleted:
+            try:
+                self.audit("system", "backup_pruned",
+                           ", ".join(p.name for p in deleted))
+                self.schedule_write()
+            except Exception:
+                pass
+        return deleted
+
+    async def _backup_loop(self):
+        """Periodically write dated backups and prune old ones."""
+        try:
+            while True:
+                try:
+                    await asyncio.sleep(self.backup_interval_seconds)
+                except asyncio.CancelledError:
+                    raise
+                try:
+                    self._write_dated_backup()
+                    self._prune_dated_backups()
+                except Exception as e:
+                    log.warning(f"Backup loop iteration failed: {e}")
+        except asyncio.CancelledError:
+            pass
 
     # ------------------- ids / audit -------------------
     def next_id(self, prefix: str) -> str:
@@ -853,9 +1040,20 @@ class Broker:
         site = web.TCPSite(self._http_runner, "0.0.0.0", self.ui_port)
         await site.start()
 
+        # schedule daily auto-backup
+        self._backup_task = asyncio.create_task(self._backup_loop())
+
         log.info(f"Broker started: UI={self.ui_port} instances={self.instance_port}")
 
     async def stop(self):
+        # cancel backup task first so it doesn't fire during teardown
+        if self._backup_task and not self._backup_task.done():
+            self._backup_task.cancel()
+            try:
+                await self._backup_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._backup_task = None
         try:
             if self._ws_server:
                 self._ws_server.close()
