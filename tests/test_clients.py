@@ -92,12 +92,23 @@ async def connect_mod(shared_broker):
     cm.NAME = "Helper"
     cm.PROJECT = "TEST"
 
-    # Wait for connection
-    end = asyncio.get_event_loop().time() + 8.0
+    # If the auto-loop is currently in a long backoff (other test modules
+    # imported connect first and tripped failed connects to a dead URL), give
+    # it a kick: close any stale ws so the loop unblocks and retries fresh
+    # against the patched BROKER_URL.
+    stale = cm._ws_holder.get("ws")
+    if stale is not None:
+        try:
+            await stale.close()
+        except Exception:
+            pass
+
+    # Wait up to 35s — covers the full exponential-backoff cycle (1+2+4+8+16=31s).
+    end = asyncio.get_event_loop().time() + 35.0
     while asyncio.get_event_loop().time() < end:
         if cm._ws_holder.get("connected"):
             break
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
     assert cm._ws_holder.get("connected"), "connect.py never connected to test broker"
 
     yield cm
