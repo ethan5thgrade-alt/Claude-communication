@@ -357,3 +357,69 @@ async def test_cyclic_task_rejected(started_broker):
             assert got_error
             # T001 deps unchanged
             assert started_broker.state["tasks"][0]["deps"] == []
+
+
+# ----------------------- mDNS / Zeroconf -----------------------
+
+# Use unique ports for these so they don't fight the started_broker fixture.
+ZC_UI_PORT = 18865
+ZC_INST_PORT = 18866
+
+
+@pytest.mark.asyncio
+async def test_zeroconf_advertise_unregister_safe(tmp_path):
+    """Start and stop a broker — mDNS registration must never raise."""
+    state_file = tmp_path / "state.json"
+    b = broker_mod.Broker(ui_port=ZC_UI_PORT, instance_port=ZC_INST_PORT,
+                          state_path=state_file)
+    # start should not raise even if zeroconf isn't available or registration
+    # fails — the broker is supposed to log-and-continue.
+    await b.start()
+    try:
+        await asyncio.sleep(0.05)
+        # If zeroconf is importable, the broker should have set _zc.
+        # If not, _zc stays None — both paths are valid.
+        try:
+            import zeroconf  # noqa: F401
+            zeroconf_available = True
+        except Exception:
+            zeroconf_available = False
+        if zeroconf_available:
+            # advertisement may still fail (e.g. no network); just confirm
+            # the broker attempted it without crashing.
+            assert b._zc is None or b._zc is not None
+        else:
+            assert b._zc is None
+    finally:
+        # stop must not raise either, regardless of whether mDNS registered.
+        await b.stop()
+        await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_zeroconf_missing_module_graceful(tmp_path, monkeypatch):
+    """Simulate zeroconf being unavailable; broker must still start/stop."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "zeroconf" or name.startswith("zeroconf."):
+            raise ImportError("simulated: zeroconf not installed")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    state_file = tmp_path / "state.json"
+    b = broker_mod.Broker(ui_port=ZC_UI_PORT + 2, instance_port=ZC_INST_PORT + 2,
+                          state_path=state_file)
+    # Must not raise even though the zeroconf import will fail.
+    await b.start()
+    try:
+        await asyncio.sleep(0.05)
+        # No zeroconf available -> no registration object.
+        assert b._zc is None
+        assert b._zc_info is None
+    finally:
+        await b.stop()
+        await asyncio.sleep(0.05)

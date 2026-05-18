@@ -6,9 +6,11 @@ Local multi-agent coordination for Claude Code. Message any of your Claude Code 
 
 - Python 3.10+ (3.13 recommended)
 - pip packages: `websockets`, `aiohttp` (tests also need `pytest`, `pytest-asyncio`)
+- Optional: `zeroconf` — enables mDNS LAN auto-discovery from `cli.py discover` and from `connect.py`'s localhost-fallback. The broker still runs fine without it.
 
 ```bash
 python3 -m pip install --user websockets aiohttp pytest pytest-asyncio
+python3 -m pip install --user zeroconf   # optional, for LAN discovery
 ```
 
 ## Setup
@@ -116,6 +118,31 @@ python3 -m pytest tests/ -v
 
 Tests spin the broker up on alternate ports (18765/18766), so they're safe to run alongside a live broker.
 
+## LAN auto-discovery (mDNS)
+
+The broker advertises itself on the local network as a Bonjour/mDNS service
+type `_agent-mesh._tcp.local.` (instance name `Agent-Mesh-<hostname>`, TXT
+records `version=1.0` and `instances=<count>`). Other devices on the same
+Wi-Fi can find it without anyone typing an IP:
+
+```bash
+# Print every broker visible on this LAN.
+python3 cli.py discover
+# → Agent-Mesh-mac-mini  192.168.1.42:8765
+```
+
+`connect.py` uses the same mechanism as a fallback: if `BROKER_URL` env var
+is not set and `ws://localhost:8766` refuses the first connection, it does a
+~2s mDNS browse and, if it finds a broker, connects to `ws://<host>:8766`.
+To force a specific broker:
+
+```bash
+BROKER_URL=ws://192.168.1.42:8766 python3 connect.py
+```
+
+If `zeroconf` isn't installed, the broker logs a warning and continues
+running normally — discovery is purely a convenience.
+
 ## Troubleshooting
 
 - **Phone can't reach the broker.** macOS firewall is blocking inbound on 8765. Either allow Python in System Settings → Network → Firewall, or run `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $(which python3)`.
@@ -124,6 +151,7 @@ Tests spin the broker up on alternate ports (18765/18766), so they're safe to ru
 - **Instance won't reconnect.** `connect.py` auto-reconnects with exponential backoff capped at 30s. If a reconnect storm starts, kill and re-run it.
 - **`state.json` looks corrupted.** Delete or rename it — the broker will start with an empty state on next launch. (It also auto-backs-up to `state.json.bak` on read failure.)
 - **WebSocket connect fails from a remote browser.** The UI uses `ws://<location.host>/ui`, so the WS port is implicit — just make sure 8765 is reachable, not 8766. Agent-to-agent traffic stays on localhost.
+- **mDNS discovery not working.** Some Wi-Fi networks (guest networks, hotel Wi-Fi, enterprise SSIDs with client isolation, certain VPNs) block multicast / Bonjour traffic, so `cli.py discover` returns nothing and `connect.py` falls back to localhost. Workaround: read the LAN IP off the broker's startup banner and either set `BROKER_URL` explicitly, e.g. `BROKER_URL=ws://192.168.1.42:8766 python3 connect.py`, or just type `http://192.168.1.42:8765` into your phone's browser. Discovery is a nicety, not a requirement.
 
 ## File map
 
@@ -135,6 +163,6 @@ agent-mesh/
 ├── index.html         # Full UI — single self-contained file
 ├── state.json         # Persisted state (created on first run)
 ├── tests/
-│   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+│   └── test_broker.py # 11+ tests covering relay/persistence/reconnect/mDNS
 └── README.md
 ```
