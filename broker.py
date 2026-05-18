@@ -46,10 +46,12 @@ def empty_state() -> dict:
 
 class Broker:
     def __init__(self, ui_port: int = UI_PORT, instance_port: int = INSTANCE_PORT,
-                 state_path: Path = STATE_PATH):
+                 state_path: Path = STATE_PATH, auth_token: Optional[str] = None):
         self.ui_port = ui_port
         self.instance_port = instance_port
         self.state_path = state_path
+        # Optional shared-token auth. None or empty string => auth disabled.
+        self.auth_token: Optional[str] = auth_token or None
 
         self.lock = asyncio.Lock()
         self.state: dict = empty_state()
@@ -225,6 +227,20 @@ class Broker:
                 mtype = msg.get("type")
 
                 if mtype == "register":
+                    # Shared-token auth (optional)
+                    if self.auth_token and msg.get("token") != self.auth_token:
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "auth_failed",
+                                "reason": "bad token",
+                            }))
+                        except Exception:
+                            pass
+                        try:
+                            await ws.close()
+                        except Exception:
+                            pass
+                        return
                     instance_id = msg.get("id")
                     if not instance_id:
                         continue
@@ -514,6 +530,9 @@ class Broker:
 
     # ------------------- UI WebSocket handler -------------------
     async def handle_ui_ws(self, request):
+        # Shared-token auth (optional) — must check before WS upgrade
+        if self.auth_token and request.query.get("token") != self.auth_token:
+            return web.Response(status=401, text="unauthorized")
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self.ui_clients.add(ws)
@@ -775,6 +794,12 @@ class Broker:
             await ws.send_json({"type": "error", "error": f"unknown action {action}"})
 
     # ------------------- HTTP REST handlers -------------------
+    def _check_rest_auth(self, request) -> Optional[web.Response]:
+        """Return a 401 Response if auth fails, else None."""
+        if self.auth_token and request.headers.get("X-Mesh-Token") != self.auth_token:
+            return web.json_response({"error": "unauthorized"}, status=401)
+        return None
+
     async def http_index(self, request):
         if INDEX_PATH.exists():
             return web.FileResponse(INDEX_PATH)
@@ -784,6 +809,9 @@ class Broker:
         )
 
     async def http_status(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
         return web.json_response({
             "instances": self.instances_snapshot(),
             "messages": self.state["messages"][-50:],
@@ -794,9 +822,15 @@ class Broker:
         })
 
     async def http_state(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
         return web.json_response(self.state)
 
     async def http_send(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
         try:
             body = await request.json()
         except Exception:
@@ -824,6 +858,9 @@ class Broker:
         return web.json_response({"ok": True, "message": entry})
 
     async def http_clear(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
         self.state["messages"] = []
         self.audit("you", "clear_messages", "REST")
         self.schedule_write()
@@ -928,8 +965,11 @@ def print_banner(ip: str, ui_port: int, instance_port: int):
 
 
 async def amain():
-    broker = Broker()
+    token = os.environ.get("MESH_TOKEN") or None
+    broker = Broker(auth_token=token)
     await broker.start()
+    if token:
+        log.info("Shared-token auth ENABLED (MESH_TOKEN set)")
     print_banner(local_ip(), broker.ui_port, broker.instance_port)
     try:
         await asyncio.Event().wait()

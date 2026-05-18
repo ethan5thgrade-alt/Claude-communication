@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import threading
 import time
@@ -19,6 +20,8 @@ INSTANCE_ID = "cc1"
 NAME = "Claude 1"
 PROJECT = "OPTFINDER"
 BROKER_URL = "ws://localhost:8766"
+# Optional shared-token auth. None or "" => no auth header sent.
+MESH_TOKEN = os.environ.get("MESH_TOKEN") or None
 # ------------------------------------------
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
@@ -88,12 +91,15 @@ async def _client_loop():
                 _ws_holder["ws"] = ws
                 _ws_holder["connected"] = True
                 # register
-                await ws.send(json.dumps({
+                reg_payload = {
                     "type": "register",
                     "id": INSTANCE_ID,
                     "name": NAME,
                     "project": PROJECT,
-                }))
+                }
+                if MESH_TOKEN:
+                    reg_payload["token"] = MESH_TOKEN
+                await ws.send(json.dumps(reg_payload))
                 print(f"[CONNECTED] {INSTANCE_ID} -> {BROKER_URL}")
                 delay = 1.0
                 async for raw in ws:
@@ -101,6 +107,9 @@ async def _client_loop():
                         payload = json.loads(raw)
                     except Exception:
                         continue
+                    if payload.get("type") == "auth_failed":
+                        print(f"[AUTH FAILED] {payload.get('reason', '')} — check MESH_TOKEN")
+                        return
                     if payload.get("type") == "backlog":
                         msgs = payload.get("messages", [])
                         print(f"[BACKLOG] {len(msgs)} queued messages")

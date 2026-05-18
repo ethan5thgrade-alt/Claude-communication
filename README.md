@@ -103,6 +103,42 @@ python3 cli.py state
 python3 cli.py clear
 ```
 
+## Security — shared-token auth
+
+By default the broker binds to `0.0.0.0` and accepts any connection on the LAN. For shared networks (coworking, coffee shops, untrusted Wi-Fi), set a shared token and every endpoint will require it.
+
+1. **Pick a token** (one-time):
+   ```bash
+   export MESH_TOKEN=$(openssl rand -hex 16)
+   ```
+
+2. **Start the broker with the same env set:**
+   ```bash
+   export MESH_TOKEN=...           # same value
+   python3 broker.py
+   ```
+   The broker logs `Shared-token auth ENABLED` on startup.
+
+3. **Connect instances** — `connect.py` reads `MESH_TOKEN` from the environment and includes it in the register payload:
+   ```bash
+   export MESH_TOKEN=...
+   python3 connect.py
+   ```
+   A wrong/missing token gets `{"type": "auth_failed", "reason": "bad token"}` and the WS is closed.
+
+4. **REST / `cli.py`** — `cli.py` sends `X-Mesh-Token: $MESH_TOKEN` automatically. From curl:
+   ```bash
+   curl -X POST http://localhost:8765/api/send \
+        -H "X-Mesh-Token: $MESH_TOKEN" \
+        -H 'Content-Type: application/json' \
+        -d '{"to":"cc1","text":"hi"}'
+   ```
+   Missing/wrong header → `401`.
+
+5. **UI WS** — pass `?token=...` in the query string when connecting to `/ui`. The bundled `index.html` running over the same origin can be wrapped to inject it; for now this gates remote-browser access.
+
+If `MESH_TOKEN` is unset or empty, auth is disabled and the broker behaves exactly as before.
+
 ## More than 4 instances
 
 The UI handles up to 8 instances with an extended color palette. Just assign distinct `INSTANCE_ID` values (`cc5`, `cc6`, …) when you connect them. On mobile, the sidebar collapses into a horizontal scrollable strip of agent pills.

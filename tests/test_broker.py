@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = 18765
-INST_PORT = 18766
+UI_PORT = 19765
+INST_PORT = 19766
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
@@ -325,6 +325,112 @@ async def test_agent_task_create_backlogs_offline_assignee(started_broker):
                 break
         # Either delivery path is acceptable — tasks_init is preferred but backlog is the safety net
         assert got_in_tasks_init or got_in_backlog
+
+
+@pytest_asyncio.fixture
+async def authed_broker(state_file):
+    """Broker fixture with auth_token='secret'."""
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT,
+                          state_path=state_file, auth_token="secret")
+    await b.start()
+    await asyncio.sleep(0.05)
+    try:
+        yield b
+    finally:
+        await b.stop()
+        await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_auth_disabled_by_default(started_broker):
+    """When auth_token is not set, existing register flow works (no token)."""
+    assert started_broker.auth_token is None
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await asyncio.sleep(0.05)
+        assert "cc1" in started_broker.instances
+        assert started_broker.instances["cc1"]["online"] is True
+
+
+@pytest.mark.asyncio
+async def test_auth_instance_rejects_wrong_token(authed_broker):
+    """Wrong token in register => auth_failed reply and connection closes."""
+    async with websockets.connect(WS_URL) as ws:
+        await ws.send(json.dumps({
+            "type": "register",
+            "id": "cc1",
+            "name": "Claude 1",
+            "project": "P",
+            "token": "wrong",
+        }))
+        raw = await asyncio.wait_for(ws.recv(), timeout=2)
+        payload = json.loads(raw)
+        assert payload["type"] == "auth_failed"
+        # Connection should be closed by the broker shortly after
+        closed = False
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=1)
+        except websockets.ConnectionClosed:
+            closed = True
+        except asyncio.TimeoutError:
+            pass
+        assert closed or ws.close_code is not None
+        # broker should NOT have registered cc1
+        assert "cc1" not in authed_broker.instances
+
+
+@pytest.mark.asyncio
+async def test_auth_instance_accepts_correct_token(authed_broker):
+    """Correct token => register succeeds normally."""
+    async with websockets.connect(WS_URL) as ws:
+        await ws.send(json.dumps({
+            "type": "register",
+            "id": "cc1",
+            "name": "Claude 1",
+            "project": "P",
+            "token": "secret",
+        }))
+        # expect memory_init, then tasks_init
+        init = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+        assert init["type"] == "memory_init"
+        tinit = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+        assert tinit["type"] == "tasks_init"
+        await asyncio.sleep(0.05)
+        assert "cc1" in authed_broker.instances
+        assert authed_broker.instances["cc1"]["online"] is True
+
+
+@pytest.mark.asyncio
+async def test_auth_rest_rejects_wrong_token(authed_broker):
+    """REST POST /api/send without X-Mesh-Token => 401."""
+    async with aiohttp.ClientSession() as session:
+        # No header at all
+        async with session.post(REST_URL + "/api/send",
+                                json={"to": "cc1", "text": "hi"}) as r:
+            assert r.status == 401
+        # Wrong header
+        async with session.post(REST_URL + "/api/send",
+                                json={"to": "cc1", "text": "hi"},
+                                headers={"X-Mesh-Token": "wrong"}) as r:
+            assert r.status == 401
+        # Correct header succeeds
+        async with session.post(REST_URL + "/api/send",
+                                json={"to": "cc1", "text": "hi"},
+                                headers={"X-Mesh-Token": "secret"}) as r:
+            assert r.status == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_ui_ws_rejects_wrong_token(authed_broker):
+    """UI WS without ?token=... => 401 (no upgrade)."""
+    async with aiohttp.ClientSession() as session:
+        # Plain GET — must not upgrade, expect 401
+        async with session.get(REST_URL + "/ui") as r:
+            assert r.status == 401
+        # With correct token in query, upgrade succeeds
+        async with session.ws_connect(REST_URL + "/ui?token=secret") as ui_ws:
+            init = await ui_ws.receive_json(timeout=2)
+            assert init["type"] == "init"
 
 
 @pytest.mark.asyncio
