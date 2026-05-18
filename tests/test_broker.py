@@ -221,6 +221,45 @@ async def test_state_persists_across_restart(state_file):
 
 
 @pytest.mark.asyncio
+async def test_state_write_is_durable(state_file):
+    """Verify the fsync'd write path works end-to-end: state ends up on disk
+    intact. We can't simulate power-off in pytest, but we exercise the new
+    fsync code paths in both _do_write and Broker.stop and confirm the file
+    is well-formed JSON containing what we wrote."""
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT, state_path=state_file)
+    await b.start()
+    await asyncio.sleep(0.05)
+    try:
+        # Mutate state and schedule a debounced write.
+        b.state.setdefault("tasks", []).append({
+            "id": "t-durable-1",
+            "title": "durable-write-test",
+            "assignee": "cc1",
+            "priority": "high",
+            "deps": [],
+            "status": "open",
+        })
+        b.schedule_write()
+        # Wait for the 0.5s debounce + fsync to complete.
+        await asyncio.sleep(0.7)
+        # Read the file back from disk and verify content.
+        assert state_file.exists(), "state file should exist after debounced write"
+        on_disk = json.loads(state_file.read_text())
+        titles = [t["title"] for t in on_disk.get("tasks", [])]
+        assert "durable-write-test" in titles
+    finally:
+        await b.stop()
+        await asyncio.sleep(0.05)
+
+    # After stop(), the final flush in Broker.stop also goes through fsync.
+    # Re-read the file and confirm it's still intact.
+    assert state_file.exists()
+    on_disk_after_stop = json.loads(state_file.read_text())
+    titles_after = [t["title"] for t in on_disk_after_stop.get("tasks", [])]
+    assert "durable-write-test" in titles_after
+
+
+@pytest.mark.asyncio
 async def test_reconnect_same_id_closes_old(started_broker):
     ws_old = await websockets.connect(WS_URL)
     await _register(ws_old, iid="cc1")

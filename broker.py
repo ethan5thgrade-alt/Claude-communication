@@ -267,7 +267,18 @@ class Broker:
             tmp = self.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
                 json.dump(self.state, f, indent=2, default=str)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self.state_path)
+            # Best-effort: fsync the directory so the rename itself is durable.
+            try:
+                dir_fd = os.open(str(self.state_path.parent), os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except (OSError, AttributeError):
+                pass  # not available on all platforms (e.g. Windows)
         except Exception as e:
             log.error(f"State write failed: {e}")
         finally:
@@ -1906,7 +1917,18 @@ class Broker:
             tmp = self.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
                 json.dump(self.state, f, indent=2, default=str)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, self.state_path)
+            # Best-effort: fsync the directory so the rename itself is durable.
+            try:
+                dir_fd = os.open(str(self.state_path.parent), os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except (OSError, AttributeError):
+                pass  # not available on all platforms (e.g. Windows)
         except Exception:
             pass
 
