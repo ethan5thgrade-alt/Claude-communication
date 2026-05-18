@@ -317,6 +317,33 @@ async def test_state_write_is_durable(state_file):
 
 
 @pytest.mark.asyncio
+async def test_shutdown_flushes_state(state_file, tmp_path):
+    """Stopping the broker (as the SIGTERM handler does) must flush state to disk."""
+    plugins_dir = tmp_path / "plugins_cache"
+    plugins_dir.mkdir()
+    ui_port = UI_PORT + 20
+    inst_port = INST_PORT + 20
+    b = broker_mod.Broker(ui_port=ui_port, instance_port=inst_port,
+                          state_path=state_file, plugins_dir=plugins_dir)
+    await b.start()
+    await asyncio.sleep(0.05)
+    try:
+        async with aiohttp.ClientSession() as session:
+            resp = await session.post(f"http://localhost:{ui_port}/api/send",
+                                      json={"to": "all", "text": "pre-shutdown"})
+            assert resp.status == 200
+    finally:
+        await b.stop()
+        await asyncio.sleep(0.05)
+
+    assert state_file.exists(), "state file was not flushed on shutdown"
+    with open(state_file) as f:
+        reloaded = json.load(f)
+    texts = [m.get("text") for m in reloaded.get("messages", [])]
+    assert "pre-shutdown" in texts, f"flushed state missing message: {texts}"
+
+
+@pytest.mark.asyncio
 async def test_reconnect_same_id_closes_old(started_broker):
     ws_old = await websockets.connect(WS_URL)
     await _register(ws_old, iid="cc1")
