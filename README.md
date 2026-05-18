@@ -66,6 +66,22 @@ Logs land in `~/Library/Logs/agent-mesh/{out,err}.log`. See
 [docs/operations.md](docs/operations.md) for log rotation and the plist
 template details.
 
+## Plugin bridge
+
+If you have Claude Code plugins installed under
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, the broker scans
+them at startup and exposes them through a discovery-only bridge — it returns
+the resolved skill/agent/command path + manifest, never executes plugin code.
+
+```bash
+curl http://localhost:8765/api/plugins
+curl http://localhost:8765/api/plugins/apple-hig-expert
+```
+
+From an instance: `broker_plugin_invoke("apple-hig-expert", "apple-hig-expert")`
+fires a request; listen for `plugin_invoke_result` on the incoming stream.
+The UI's PLUGINS tab groups everything by marketplace.
+
 ## Non-Python clients
 
 A zero-dependency TypeScript client lives in [`clients/`](./clients/). It

@@ -108,6 +108,10 @@ def _fmt_incoming(payload: dict) -> str:
         return f"[VOTE RESOLVED] {payload.get('vote_id', '')} winner={payload.get('winner', '')}"
     if t == "control":
         return f"[CONTROL] paused={payload.get('paused')}"
+    if t == "plugin_invoke_result":
+        return (f"[PLUGIN {payload.get('status', '?').upper()}] "
+                f"{payload.get('plugin', '?')}:{payload.get('tool', '?')} "
+                f"({payload.get('kind', '')}) -> {payload.get('path', '')}")
     return f"[{t or 'EVENT'}] {json.dumps(payload, default=str)}"
 
 
@@ -474,6 +478,21 @@ def broker_vote_and_wait(question: str, options: list, threshold: Optional[int] 
     with _vote_lock:
         _pending_votes.pop(slot.get("vote_id"), None)
     return slot["winner"]
+
+
+# ---------------- plugins ----------------
+def broker_plugin_invoke(plugin: str, tool: str, **args):
+    """Discovery-only plugin bridge. Fire-and-forget — listen for
+    `plugin_invoke_result` events on the incoming stream to get back
+    {status: "discovered"|"not_found", path, manifest, ...}.
+    """
+    _schedule(_send_json({
+        "type": "plugin_invoke",
+        "plugin": plugin,
+        "tool": tool,
+        "args": dict(args),
+    }))
+
 
 
 # Start the loop on import
