@@ -327,6 +327,89 @@ async def test_agent_task_create_backlogs_offline_assignee(started_broker):
         assert got_in_tasks_init or got_in_backlog
 
 
+async def _ui_approve_pending(ap_id: str, decision: bool):
+    """Open a UI ws, send the approve action, and close."""
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            await ui_ws.receive_json(timeout=2)  # init
+            await ui_ws.send_json({"action": "approve", "id": ap_id, "decision": decision})
+            # give the broker a moment to dispatch
+            await asyncio.sleep(0.15)
+
+
+@pytest.mark.asyncio
+async def test_approval_resolve_approves(started_broker):
+    """Instance fires approval_request; UI approves; instance receives approval_decision=True."""
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await ws.send(json.dumps({
+            "type": "approval_request",
+            "action": "delete /scan",
+            "risk": "medium",
+            "detail": "old clients 404",
+        }))
+        pending = await _recv_until(ws, lambda p: p.get("type") == "approval_pending")
+        ap_id = pending["id"]
+        assert ap_id and ap_id.startswith("AP")
+        # broker tracks the future
+        assert ap_id in started_broker._pending_approvals
+        # UI approves
+        await _ui_approve_pending(ap_id, True)
+        decision = await _recv_until(ws, lambda p: p.get("type") == "approval_decision")
+        assert decision["id"] == ap_id
+        assert decision["decision"] is True
+        # broker future resolved + popped
+        assert ap_id not in started_broker._pending_approvals
+        # audit captured the decider + verdict + requester
+        ad = [a for a in started_broker.state["audit"]
+              if a["action"] == "approval_decision" and ap_id in a["detail"]]
+        assert ad, "approval_decision audit entry missing"
+        entry = ad[-1]
+        assert entry["agent"] == "you"
+        assert "cc1" in entry["detail"]
+        assert "approved" in entry["detail"]
+        assert entry.get("ts")
+
+
+@pytest.mark.asyncio
+async def test_approval_resolve_rejects(started_broker):
+    """Same as approve, but the UI rejects."""
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await ws.send(json.dumps({
+            "type": "approval_request",
+            "action": "drop prod table",
+            "risk": "high",
+        }))
+        pending = await _recv_until(ws, lambda p: p.get("type") == "approval_pending")
+        ap_id = pending["id"]
+        await _ui_approve_pending(ap_id, False)
+        decision = await _recv_until(ws, lambda p: p.get("type") == "approval_decision")
+        assert decision["id"] == ap_id
+        assert decision["decision"] is False
+        assert ap_id not in started_broker._pending_approvals
+
+
+@pytest.mark.asyncio
+async def test_approval_timeout(started_broker):
+    """If no decision is ever sent, awaiting the broker-side future raises TimeoutError."""
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await ws.send(json.dumps({
+            "type": "approval_request",
+            "action": "noop",
+        }))
+        pending = await _recv_until(ws, lambda p: p.get("type") == "approval_pending")
+        ap_id = pending["id"]
+        fut = started_broker._pending_approvals.get(ap_id)
+        assert fut is not None
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(fut), timeout=0.3)
+        # future still pending (we shielded), broker still tracks it
+        assert not fut.done()
+        assert ap_id in started_broker._pending_approvals
+
+
 @pytest.mark.asyncio
 async def test_cyclic_task_rejected(started_broker):
     async with aiohttp.ClientSession() as session:

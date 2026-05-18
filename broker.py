@@ -58,6 +58,9 @@ class Broker:
         self.instances: dict[str, dict] = {}  # id -> {ws, name, project, status, workload, online, role, paused}
         self.ui_clients: set[web.WebSocketResponse] = set()
 
+        # broker-side awaitable approvals: ap_id -> Future[bool]
+        self._pending_approvals: dict[str, asyncio.Future] = {}
+
         # per-instance backlog queues
         self.backlog: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
 
@@ -356,6 +359,18 @@ class Broker:
                         self.state["approvals"].append(ap)
                         self.audit(instance_id, "approval_request", ap["action"])
                         self.schedule_write()
+                        # create awaitable future so server-side callers can await it too
+                        loop = asyncio.get_event_loop()
+                        self._pending_approvals[ap["id"]] = loop.create_future()
+                    # tell the requesting instance the assigned id so it can correlate
+                    try:
+                        await ws.send(json.dumps({
+                            "type": "approval_pending",
+                            "id": ap["id"],
+                            "action": ap["action"],
+                        }, default=str))
+                    except Exception:
+                        pass
                     await self.broadcast_ui({"type": "approval_request", "approval": ap})
 
                 elif mtype == "memory_write":
@@ -576,7 +591,10 @@ class Broker:
                 return
             ap["status"] = "approved" if decision else "rejected"
             ap["decided_at"] = now_iso()
-            self.audit("you", "approval_decision", f"{ap_id}={ap['status']}")
+            ap["decision"] = decision
+            # audit records both the decider ("you") and the requesting instance + verdict
+            self.audit("you", "approval_decision",
+                       f"{ap_id} requester={ap.get('from','?')} verdict={ap['status']}")
             self.schedule_write()
             await self.send_to_instance(ap["from"], {
                 "type": "approval_decision",
@@ -584,6 +602,10 @@ class Broker:
                 "decision": decision,
                 "action": ap["action"],
             })
+            # resolve any server-side awaiter
+            fut = self._pending_approvals.pop(ap_id, None)
+            if fut is not None and not fut.done():
+                fut.set_result(decision)
             await self.state_update({"approvals": self.state["approvals"]})
 
         elif action == "vote":
