@@ -107,11 +107,53 @@ python3 cli.py clear
 
 The UI handles up to 8 instances with an extended color palette. Just assign distinct `INSTANCE_ID` values (`cc5`, `cc6`, …) when you connect them. On mobile, the sidebar collapses into a horizontal scrollable strip of agent pills.
 
+## Auto-start on Mac
+
+The repo ships a launchd plist (`com.voidlabs.agent-mesh.plist`) and a `Makefile`
+so the broker starts on every login and restarts itself if it ever crashes.
+
+```bash
+cd ~/agent-mesh
+
+make install-service     # copy plist → ~/Library/LaunchAgents, launchctl load
+make status              # show whether it's running
+make tail-logs           # follow stdout + stderr
+make restart-service     # unload + load (e.g. after editing broker.py)
+make uninstall-service   # stop and remove
+```
+
+Logs land in `~/Library/Logs/agent-mesh/out.log` and `err.log`.
+Other make targets: `make dev` (foreground), `make test`, `make help`.
+
+### Editing the plist for a different setup
+
+The shipped `com.voidlabs.agent-mesh.plist` hard-codes
+`/usr/local/bin/python3.13` and `/Users/ethanstrauss/agent-mesh/` because
+launchd does **not** expand `~` or `$HOME`. If your Python or repo lives
+elsewhere, edit those three `<string>` entries (`ProgramArguments` and
+`WorkingDirectory`) before `make install-service`. The two log paths under
+`Library/Logs/agent-mesh/` should also be updated to your own home dir.
+
+### Rotating the logs
+
+If the logs grow large, drop a single line into
+`/etc/newsyslog.d/agent-mesh.conf` (replace `ethanstrauss` with your username):
+
+```
+# logfilename                                       [owner:group]   mode count size when  flags
+/Users/ethanstrauss/Library/Logs/agent-mesh/*.log   ethanstrauss:staff 644 5 5000 *     J
+```
+
+`newsyslog` runs hourly via launchd and will gzip-rotate the file once it
+exceeds ~5 MB, keeping 5 archives.
+
 ## Tests
 
 ```bash
 cd ~/agent-mesh
 python3 -m pytest tests/ -v
+# or:
+make test
 ```
 
 Tests spin the broker up on alternate ports (18765/18766), so they're safe to run alongside a live broker.
@@ -129,12 +171,14 @@ Tests spin the broker up on alternate ports (18765/18766), so they're safe to ru
 
 ```
 agent-mesh/
-├── broker.py          # Core relay: WS on 8766 + HTTP/UI on 8765
-├── connect.py         # Snippet each Claude Code instance runs
-├── cli.py             # REST sender for terminal use
-├── index.html         # Full UI — single self-contained file
-├── state.json         # Persisted state (created on first run)
+├── broker.py                      # Core relay: WS on 8766 + HTTP/UI on 8765
+├── connect.py                     # Snippet each Claude Code instance runs
+├── cli.py                         # REST sender for terminal use
+├── index.html                     # Full UI — single self-contained file
+├── state.json                     # Persisted state (created on first run)
+├── Makefile                       # dev / test / install-service / tail-logs / …
+├── com.voidlabs.agent-mesh.plist  # launchd template (auto-start on Mac boot)
 ├── tests/
-│   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+│   └── test_broker.py             # 12 tests covering relay/persistence/reconnect
 └── README.md
 ```
