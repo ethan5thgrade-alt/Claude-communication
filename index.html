@@ -756,6 +756,39 @@
   #modal .box .actions button { padding: 6px 14px; border-radius: 4px; font-size: 9px; letter-spacing: 1.5px; }
   #modal .box .confirm { background: var(--red); color: var(--on-accent); border-color: var(--red); }
 
+  /* Keyboard navigation */
+  .bubble.kbd-focus {
+    outline: 2px solid var(--gold);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+  #kbd-help {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); z-index: 200;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  #kbd-help.show { display: flex; }
+  #kbd-help .box {
+    background: var(--surface-2); border: 1px solid var(--gold);
+    border-radius: 4px; padding: 22px 26px; max-width: 420px; width: 100%;
+    font-family: inherit;
+  }
+  #kbd-help .t {
+    font-size: 11px; letter-spacing: 2px; margin-bottom: 14px;
+    color: var(--gold); text-transform: uppercase;
+  }
+  #kbd-help table { width: 100%; border-collapse: collapse; font-size: 10px; }
+  #kbd-help table td { padding: 5px 4px; border-bottom: 1px solid var(--border); }
+  #kbd-help table td.k {
+    width: 70px; color: var(--gold); letter-spacing: 1.5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #kbd-help table td.d { color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+  #kbd-help .hint {
+    margin-top: 14px; font-size: 8px; letter-spacing: 1.5px;
+    color: var(--muted); text-transform: uppercase; text-align: right;
+  }
+
   /* Mobile responsive */
   @media (max-width: 700px) {
     #sidebar { display: none; }
@@ -976,6 +1009,22 @@
       <button id="modal-cancel">CANCEL</button>
       <button class="confirm" id="modal-ok">CONFIRM</button>
     </div>
+  </div>
+</div>
+
+<div id="kbd-help" role="dialog" aria-label="Keyboard shortcuts">
+  <div class="box">
+    <div class="t">Keyboard Shortcuts</div>
+    <table>
+      <tr><td class="k">j</td><td class="d">Next message</td></tr>
+      <tr><td class="k">k</td><td class="d">Previous message</td></tr>
+      <tr><td class="k">n</td><td class="d">New task</td></tr>
+      <tr><td class="k">t</td><td class="d">Switch to TASKS tab</td></tr>
+      <tr><td class="k">m</td><td class="d">Switch to CHAT tab</td></tr>
+      <tr><td class="k">?</td><td class="d">Toggle this help</td></tr>
+      <tr><td class="k">Esc</td><td class="d">Dismiss</td></tr>
+    </table>
+    <div class="hint">Click outside or press Esc to close</div>
   </div>
 </div>
 
@@ -2404,6 +2453,138 @@ function wire() {
       if (STATE.reconnectTimer) { clearTimeout(STATE.reconnectTimer); STATE.reconnectTimer = null; }
       STATE.reconnectAttempt = 0;
       connect();
+    }
+  });
+
+  // Keyboard shortcuts (vim-style)
+  wireKeyboardShortcuts();
+}
+
+// ----------------------------------------------------------------------------
+// Keyboard shortcuts
+// ----------------------------------------------------------------------------
+const KBD = { activeMsgIndex: -1 };
+
+function kbdIsTyping(target) {
+  if (!target) return false;
+  const tag = (target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
+function kbdGetBubbles() {
+  return document.querySelectorAll('#chat-thread .bubble');
+}
+
+function kbdSetActiveMessage(idx) {
+  const bubbles = kbdGetBubbles();
+  if (!bubbles.length) { KBD.activeMsgIndex = -1; return; }
+  // Clear existing focus
+  bubbles.forEach(b => b.classList.remove('kbd-focus'));
+  // Clamp index
+  if (idx < 0) idx = 0;
+  if (idx >= bubbles.length) idx = bubbles.length - 1;
+  KBD.activeMsgIndex = idx;
+  const target = bubbles[idx];
+  target.classList.add('kbd-focus');
+  target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function kbdMoveMessage(delta) {
+  const bubbles = kbdGetBubbles();
+  if (!bubbles.length) return;
+  let next = KBD.activeMsgIndex;
+  if (next < 0) {
+    // First press: j → top, k → bottom
+    next = delta > 0 ? 0 : bubbles.length - 1;
+  } else {
+    next = KBD.activeMsgIndex + delta;
+  }
+  kbdSetActiveMessage(next);
+}
+
+function kbdOpenNewTask() {
+  switchTab('tasks');
+  // Focus title input on next frame (so the tab pane is visible)
+  requestAnimationFrame(() => {
+    const input = document.getElementById('ct-title');
+    if (input) { input.focus(); input.select && input.select(); }
+  });
+}
+
+function kbdToggleHelp(force) {
+  const help = document.getElementById('kbd-help');
+  if (!help) return;
+  if (force === true) help.classList.add('show');
+  else if (force === false) help.classList.remove('show');
+  else help.classList.toggle('show');
+}
+
+function wireKeyboardShortcuts() {
+  // Dismiss help on outside click
+  const help = document.getElementById('kbd-help');
+  if (help) {
+    help.addEventListener('click', (e) => {
+      if (e.target === help) kbdToggleHelp(false);
+    });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    // Ignore if modifier keys are held (avoid clobbering browser shortcuts)
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Ignore while typing in form fields
+    if (kbdIsTyping(e.target)) {
+      // Still allow Esc to blur an input when help is open
+      if (e.key === 'Escape' && document.getElementById('kbd-help').classList.contains('show')) {
+        kbdToggleHelp(false);
+      }
+      return;
+    }
+
+    // Esc closes help / modal overlays
+    if (e.key === 'Escape') {
+      const helpEl = document.getElementById('kbd-help');
+      if (helpEl && helpEl.classList.contains('show')) {
+        e.preventDefault();
+        kbdToggleHelp(false);
+      }
+      return;
+    }
+
+    // ? toggles help (Shift+/ on US layouts)
+    if (e.key === '?') {
+      e.preventDefault();
+      kbdToggleHelp();
+      return;
+    }
+
+    // Single-letter bindings — only fire if no Shift (so we don't grab capitals)
+    if (e.shiftKey) return;
+
+    switch (e.key) {
+      case 'j':
+        e.preventDefault();
+        if (STATE.currentTab !== 'chat') switchTab('chat');
+        kbdMoveMessage(+1);
+        break;
+      case 'k':
+        e.preventDefault();
+        if (STATE.currentTab !== 'chat') switchTab('chat');
+        kbdMoveMessage(-1);
+        break;
+      case 'n':
+        e.preventDefault();
+        kbdOpenNewTask();
+        break;
+      case 't':
+        e.preventDefault();
+        switchTab('tasks');
+        break;
+      case 'm':
+        e.preventDefault();
+        switchTab('chat');
+        break;
     }
   });
 }
