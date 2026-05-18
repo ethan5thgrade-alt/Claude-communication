@@ -12,7 +12,8 @@ import socket
 import sys
 import threading
 import time
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 import websockets
 
@@ -113,6 +114,155 @@ def _fmt_incoming(payload: dict) -> str:
                 f"{payload.get('plugin', '?')}:{payload.get('tool', '?')} "
                 f"({payload.get('kind', '')}) -> {payload.get('path', '')}")
     return f"[{t or 'EVENT'}] {json.dumps(payload, default=str)}"
+
+
+# ---------------- typed event dataclasses ----------------
+# Parallel API to _fmt_incoming(): user code may call parse_event(payload) inside
+# its own incoming handler to get a typed dataclass instance (IDE field help)
+# rather than poking around a raw dict. The print/dispatch path in _client_loop
+# is unchanged — these dataclasses are strictly additive.
+
+
+@dataclass
+class MessageEvent:
+    from_: str
+    to: str
+    text: str
+    ts: str
+    id: str
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "MessageEvent":
+        return cls(
+            from_=payload.get("from", ""),
+            to=payload.get("to", ""),
+            text=payload.get("text", ""),
+            ts=payload.get("ts", ""),
+            id=payload.get("id", ""),
+        )
+
+
+@dataclass
+class TaskAssignedEvent:
+    task: dict = field(default_factory=dict)
+    ts: str = ""
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "TaskAssignedEvent":
+        return cls(task=dict(payload.get("task") or {}), ts=payload.get("ts", ""))
+
+
+@dataclass
+class TaskCompletedEvent:
+    task: dict = field(default_factory=dict)
+    ts: str = ""
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "TaskCompletedEvent":
+        return cls(task=dict(payload.get("task") or {}), ts=payload.get("ts", ""))
+
+
+@dataclass
+class MemoryEvent:
+    id: str
+    key: str
+    value: Any
+    type: str
+    by: str
+    ts: str
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "MemoryEvent":
+        # The broker wraps the entry under "memory"; fall back to top-level fields
+        # for forward-compat with shapes that flatten the entry.
+        m = payload.get("memory") or payload
+        return cls(
+            id=m.get("id", ""),
+            key=m.get("key", ""),
+            value=m.get("value"),
+            type=m.get("type", ""),
+            by=m.get("by", ""),
+            ts=m.get("ts", ""),
+        )
+
+
+@dataclass
+class ApprovalDecisionEvent:
+    id: str
+    decision: bool
+    action: str
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "ApprovalDecisionEvent":
+        return cls(
+            id=payload.get("id", ""),
+            decision=bool(payload.get("decision")),
+            action=payload.get("action", ""),
+        )
+
+
+@dataclass
+class VoteResolvedEvent:
+    vote_id: str
+    winner: str
+    vote: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "VoteResolvedEvent":
+        return cls(
+            vote_id=payload.get("vote_id", ""),
+            winner=payload.get("winner", ""),
+            vote=dict(payload.get("vote") or {}),
+        )
+
+
+@dataclass
+class PluginInvokeResultEvent:
+    request_id: str
+    plugin: str
+    tool: str
+    kind: str
+    status: str
+    path: str
+    manifest: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "PluginInvokeResultEvent":
+        return cls(
+            request_id=payload.get("request_id", ""),
+            plugin=payload.get("plugin", ""),
+            tool=payload.get("tool", ""),
+            kind=payload.get("kind", ""),
+            status=payload.get("status", ""),
+            path=payload.get("path", ""),
+            manifest=dict(payload.get("manifest") or {}),
+        )
+
+
+_EVENT_DISPATCH = {
+    "message": MessageEvent,
+    "task_assigned": TaskAssignedEvent,
+    "task_completed": TaskCompletedEvent,
+    "memory_write": MemoryEvent,
+    "approval_decision": ApprovalDecisionEvent,
+    "vote_resolved": VoteResolvedEvent,
+    "plugin_invoke_result": PluginInvokeResultEvent,
+}
+
+
+def parse_event(payload: dict) -> Optional[object]:
+    """Return a typed dataclass instance for known event payloads, or None.
+
+    The existing dict-based callback path is unchanged. User code that wants
+    IDE help on field names can call parse_event(p) inside its own incoming
+    handler and switch on isinstance(...) instead of payload["type"].
+    """
+    if not isinstance(payload, dict):
+        return None
+    cls = _EVENT_DISPATCH.get(payload.get("type"))
+    if cls is None:
+        return None
+    return cls.from_payload(payload)
 
 
 def _handle_approval_pending(payload: dict):
