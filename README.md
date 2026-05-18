@@ -133,6 +133,17 @@ python3 cli.py task "write CSV parser" --assignee cc2 --priority high
 python3 cli.py memorize API_SHAPE "{pct, ticker}"
 ```
 
+## Tests, pre-commit, CI
+
+```bash
+python3.13 -m pytest tests/ -v   # broker tests + client helper tests
+bash scripts/smoke.sh             # spins broker on 18998/18999, exercises REST
+pre-commit install                # ruff + check-yaml + EOF hygiene
+```
+
+GitHub Actions runs the pytest matrix on Python 3.10/3.11/3.12/3.13 plus the
+smoke script — see `.github/workflows/ci.yml`.
+
 ## File map
 
 ```
@@ -142,21 +153,19 @@ agent-mesh/
 ├── cli.py                         # REST sender for terminal use
 ├── index.html                     # Single-file UI
 ├── state.json                     # Persisted state (created on first run)
-├── Makefile                       # dev / test / install-service / tail-logs / …
+├── Makefile                       # dev / test / install-service / tail-logs
 ├── com.voidlabs.agent-mesh.plist  # launchd template (auto-start on Mac boot)
-├── tests/test_broker.py           # broker test suite
+├── tests/
+│   ├── test_broker.py             # WS/REST protocol tests
+│   └── test_clients.py            # End-to-end connect.py helper tests
 ├── clients/                       # Non-Python clients (TypeScript)
 ├── docs/                          # Detailed documentation (see table above)
-├── README.md
-└── ROADMAP.md                     # 100-item build-out plan
-```
-
-## Tests
-
-```bash
-python3.13 -m pytest tests/ -v
-# or
-make test
+├── scripts/smoke.sh               # REST smoke test
+├── .github/workflows/ci.yml       # pytest matrix on push/PR
+├── .pre-commit-config.yaml        # ruff + hygiene hooks
+├── CONTRIBUTING.md                # branch/PR conventions
+├── ROADMAP.md                     # 100-item build-out plan
+└── README.md
 ```
 
 Tests spin the broker up on alternate ports, so they're safe to run alongside
