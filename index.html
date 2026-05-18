@@ -1,0 +1,2291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#0A0A0A" />
+<title>AGENT MESH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --surface: #0D0D0D;
+    --surface-2: #111111;
+    --border: #1E1E1E;
+    --muted: #2A2A2A;
+    --dim: #555555;
+    --body: #D0D0D0;
+    --gold: #C9A84C;
+    --red: #D47B6B;
+    --green: #7EC8A4;
+    --blue: #6B9FD4;
+    --purple: #B07FD4;
+    --teal: #6BD4C9;
+    --orange: #D4A46B;
+    --violet: #9B6BD4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; width: 100%;
+    background: var(--bg); color: var(--body);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overflow: hidden;
+  }
+  button, input, textarea, select {
+    font-family: inherit; font-size: inherit; color: inherit;
+    background: transparent; border: 1px solid var(--border);
+    outline: none;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--dim); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  textarea, input { padding: 8px 10px; border-radius: 4px; background: var(--surface); }
+  textarea:focus, input:focus, select:focus { border-color: var(--gold); }
+  textarea { resize: none; font-size: 12px; }
+  select { padding: 6px 8px; border-radius: 4px; background: var(--surface); }
+  ::placeholder { color: var(--dim); }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--muted); border-radius: 3px; }
+
+  /* Layout */
+  #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+  #banner-area { flex: 0 0 auto; }
+  .banner {
+    padding: 8px 12px; font-size: 10px; letter-spacing: 1px;
+    text-align: center; text-transform: uppercase;
+    display: flex; align-items: center; justify-content: center; gap: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .banner.err { background: #2a0e0e; color: var(--red); }
+  .banner.warn { background: #2a200e; color: var(--gold); }
+  .banner button {
+    padding: 4px 10px; border-radius: 4px;
+    background: rgba(255,255,255,0.05); font-size: 9px; letter-spacing: 1px;
+  }
+
+  /* Header */
+  header {
+    flex: 0 0 auto; display: flex; align-items: center;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0;
+    min-height: 48px;
+    position: sticky; top: 0;
+    z-index: 50;
+  }
+  .h-left { display: flex; align-items: center; gap: 8px; padding: 0 14px; min-width: 0; }
+  .h-title {
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 3px; color: var(--body);
+  }
+  .conn-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim);
+  }
+  .conn-dot.green { background: var(--green); animation: ripple 1.8s infinite; }
+  .conn-dot.red { background: var(--red); }
+  .conn-state {
+    font-size: 8px; letter-spacing: 2px;
+    color: var(--dim); text-transform: uppercase;
+  }
+  .h-tabs {
+    display: flex; flex: 1; overflow-x: auto; scrollbar-width: none;
+    justify-content: center;
+  }
+  .h-tabs::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    border: none; border-bottom: 2px solid transparent;
+    padding: 14px 14px; background: transparent;
+    color: var(--dim); font-size: 9px; letter-spacing: 2px;
+    text-transform: uppercase; position: relative; white-space: nowrap;
+  }
+  .tab-btn:hover { color: var(--body); }
+  .tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
+  .tab-badge {
+    display: inline-block; min-width: 14px; height: 14px;
+    padding: 0 4px; border-radius: 7px;
+    background: var(--red); color: #0A0A0A;
+    font-size: 8px; font-weight: 700;
+    line-height: 14px; text-align: center;
+    margin-left: 4px; vertical-align: middle;
+  }
+  .h-right { display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+  .h-action {
+    padding: 6px 10px; border-radius: 4px; background: var(--surface-2);
+    font-size: 9px; letter-spacing: 1.5px;
+    color: var(--body); border: 1px solid var(--border);
+    display: inline-flex; align-items: center; gap: 4px;
+    text-transform: uppercase;
+  }
+  .h-action.gold { color: var(--gold); }
+  .h-action.gold.active { background: var(--gold); color: #0A0A0A; border-color: var(--gold); }
+  .h-action.red { color: var(--red); }
+  .h-action.red:hover { background: var(--red); color: #0A0A0A; border-color: var(--red); }
+  .h-action.green { color: var(--green); }
+  .h-action.green:hover { background: var(--green); color: #0A0A0A; border-color: var(--green); }
+
+  /* Body */
+  #body {
+    flex: 1; display: flex; min-height: 0; overflow: hidden;
+  }
+  #sidebar {
+    flex: 0 0 220px; border-right: 1px solid var(--border);
+    background: var(--surface); display: flex; flex-direction: column;
+    min-height: 0;
+  }
+  #sidebar .sb-head {
+    padding: 12px 12px 6px;
+    font-size: 7px; letter-spacing: 3px; color: var(--dim);
+    text-transform: uppercase; border-bottom: 1px solid var(--border);
+  }
+  #sidebar .sb-instances { flex: 1; overflow-y: auto; }
+  #sidebar .sb-stats {
+    border-top: 1px solid var(--border);
+    padding: 10px 12px;
+    font-size: 9px; letter-spacing: 1px;
+    color: var(--dim); display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  }
+  .sb-stat { display: flex; justify-content: space-between; }
+  .sb-stat b { color: var(--body); font-weight: 500; }
+
+  .agent-card {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    cursor: pointer; position: relative; transition: background 120ms;
+  }
+  .agent-card:hover { background: rgba(255,255,255,0.02); }
+  .agent-card.active { background: rgba(201,168,76,0.04); }
+  .agent-card.filtered { box-shadow: inset 3px 0 0 var(--gold); }
+  .ac-row1 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .ac-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+    background: var(--dim);
+  }
+  .ac-dot.online { background: var(--green); animation: ripple 1.8s infinite; }
+  .ac-dot.error { background: var(--red); }
+  .ac-name { font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+  .ac-role {
+    font-size: 7px; letter-spacing: 2px;
+    color: var(--dim); text-transform: uppercase; margin-bottom: 4px;
+  }
+  .ac-task {
+    font-size: 10px; color: var(--body);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-bottom: 6px;
+  }
+  .workload-bar {
+    height: 3px; background: var(--muted); border-radius: 2px;
+    overflow: hidden; margin-bottom: 4px;
+  }
+  .workload-fill { height: 100%; transition: width 200ms; }
+  .ac-meta {
+    font-size: 8px; letter-spacing: 1px;
+    color: var(--dim); display: flex; justify-content: space-between;
+  }
+
+  /* Mobile agent strip */
+  #agent-strip {
+    display: none; flex: 0 0 auto;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    padding: 8px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  #agent-strip::-webkit-scrollbar { display: none; }
+  .agent-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; margin-right: 6px;
+    border-radius: 20px; background: var(--surface-2);
+    border: 1px solid var(--border);
+    font-size: 9px; letter-spacing: 1px;
+  }
+  .agent-pill .ac-dot { width: 6px; height: 6px; flex: 0 0 6px; }
+
+  /* Main content */
+  #main {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .tab-pane { display: none; flex: 1; min-height: 0; overflow: hidden; }
+  .tab-pane.active { display: flex; flex-direction: column; }
+
+  /* ===== CHAT TAB ===== */
+  #pane-chat { flex-direction: row; }
+  #conv-list {
+    flex: 0 0 220px;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--surface);
+  }
+  .conv-row {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    cursor: pointer; position: relative;
+  }
+  .conv-row:hover { background: rgba(255,255,255,0.02); }
+  .conv-row.active { background: rgba(201,168,76,0.05); }
+  .cr-row1 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .cr-name { font-size: 10px; font-weight: 700; letter-spacing: 1px; flex: 1;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cr-preview {
+    font-size: 9px; color: var(--dim);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .unread-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--gold); flex: 0 0 6px;
+  }
+  .typing-dot {
+    color: var(--gold); font-size: 14px;
+    animation: blink 1s infinite;
+  }
+  #chat-main {
+    flex: 1; display: flex; flex-direction: column;
+    min-width: 0; min-height: 0;
+  }
+  #chat-header {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    min-height: 42px;
+  }
+  #chat-header .back-btn { display: none; }
+  #chat-title { font-size: 11px; letter-spacing: 1px; font-weight: 700; }
+  #chat-typing {
+    font-size: 9px; color: var(--gold); letter-spacing: 1px;
+    margin-left: 8px;
+  }
+  #chat-clear {
+    margin-left: auto; padding: 4px 10px; border-radius: 4px;
+    background: var(--surface-2); font-size: 9px; letter-spacing: 1px;
+    color: var(--dim);
+  }
+  #chat-clear:hover { color: var(--red); border-color: var(--red); }
+  #chat-thread {
+    flex: 1; overflow-y: auto; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .bubble {
+    max-width: 78%; padding: 8px 12px; border-radius: 8px;
+    font-size: 13px; line-height: 1.4; word-wrap: break-word;
+    word-break: break-word; white-space: pre-wrap;
+    animation: fadeUp 220ms ease-out;
+  }
+  .bubble .meta {
+    font-size: 8px; letter-spacing: 1.5px;
+    color: var(--dim); margin-top: 4px;
+    text-transform: uppercase;
+  }
+  .bubble.you {
+    align-self: flex-end;
+    background: var(--gold); color: #0A0A0A;
+    border: 1px solid var(--gold);
+  }
+  .bubble.you .meta { color: rgba(0,0,0,0.6); }
+  .bubble.them {
+    align-self: flex-start;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  .bubble.relay {
+    align-self: flex-start;
+    background: transparent;
+    border: 1px dashed var(--muted);
+  }
+  .bubble.relay .meta { color: var(--blue); }
+  #compose {
+    flex: 0 0 auto; border-top: 1px solid var(--border);
+    padding: 10px; background: var(--surface);
+    display: flex; align-items: flex-end; gap: 8px;
+    position: relative;
+  }
+  #compose.broadcast { border-top-color: var(--red); }
+  #compose.broadcast textarea { border-color: var(--red); }
+  #compose-text {
+    flex: 1; min-height: 36px; max-height: 120px;
+    padding: 8px 10px; border-radius: 4px; background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+  #compose-text:focus { border-color: var(--gold); }
+  #compose.broadcast #compose-text:focus { border-color: var(--red); }
+  .compose-btn {
+    padding: 8px 10px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 11px;
+  }
+  #send-btn { background: var(--gold); color: #0A0A0A; border-color: var(--gold);
+              font-size: 10px; letter-spacing: 1.5px; padding: 8px 14px; font-weight: 700; }
+  #send-btn:disabled { background: var(--muted); color: var(--dim); border-color: var(--muted); }
+  #compose.broadcast #send-btn { background: var(--red); border-color: var(--red); }
+  #quick-pop {
+    display: none; position: absolute;
+    bottom: 60px; right: 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px; min-width: 240px;
+    z-index: 20;
+  }
+  #quick-pop.show { display: block; }
+  #quick-pop button {
+    display: block; width: 100%; text-align: left;
+    padding: 8px 10px; border: none; border-radius: 4px;
+    background: transparent; font-size: 10px;
+    color: var(--body);
+  }
+  #quick-pop button:hover { background: rgba(255,255,255,0.04); }
+  .broadcast-bar {
+    padding: 6px 10px; background: rgba(212,123,107,0.08);
+    border-bottom: 1px solid var(--red);
+    font-size: 9px; letter-spacing: 1.5px; color: var(--red);
+    text-align: center; text-transform: uppercase;
+  }
+
+  /* ===== TASKS TAB ===== */
+  #pane-tasks { padding: 12px; overflow: hidden; flex-direction: column; }
+  #tasks-filterbar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px; font-size: 9px; letter-spacing: 1px;
+    color: var(--dim);
+  }
+  #tasks-filterbar button {
+    padding: 4px 10px; border-radius: 4px; background: var(--surface-2);
+    font-size: 9px; letter-spacing: 1px; color: var(--body);
+  }
+  #kanban {
+    flex: 1; display: grid;
+    grid-template-columns: repeat(4, 1fr); gap: 10px;
+    min-height: 0; overflow: hidden;
+  }
+  .col {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; display: flex; flex-direction: column;
+    min-height: 0; overflow: hidden;
+  }
+  .col-head {
+    padding: 10px 12px; font-size: 9px; letter-spacing: 2px;
+    color: var(--dim); text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between;
+  }
+  .col-body {
+    flex: 1; overflow-y: auto; padding: 8px;
+    display: flex; flex-direction: column; gap: 8px;
+    min-height: 0;
+  }
+  .col-body.drag-over { background: rgba(201,168,76,0.04); }
+  .task-card {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px;
+    cursor: pointer; position: relative;
+    animation: fadeUp 200ms ease-out;
+  }
+  .task-card:hover { border-color: var(--dim); }
+  .task-card.blocked { border-color: var(--red); }
+  .tc-title { font-size: 11px; font-weight: 500; margin-bottom: 6px; line-height: 1.4; }
+  .tc-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+  .pill {
+    display: inline-flex; align-items: center;
+    padding: 2px 8px; border-radius: 20px;
+    font-size: 8px; letter-spacing: 1px;
+    border: 1px solid var(--border);
+    text-transform: uppercase;
+  }
+  .pill.priority-high { color: var(--red); border-color: var(--red); }
+  .pill.priority-medium { color: var(--gold); border-color: var(--gold); }
+  .pill.priority-low { color: var(--green); border-color: var(--green); }
+  .pill.blocked { color: var(--red); border-color: var(--red); background: rgba(212,123,107,0.1); }
+  .pill.agent { font-weight: 700; }
+  .tc-deps {
+    font-size: 8px; color: var(--dim); letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .tc-progress { margin-top: 6px; }
+  .tc-moves {
+    display: flex; gap: 4px; margin-top: 8px;
+  }
+  .tc-moves button {
+    flex: 1; padding: 4px; border-radius: 4px;
+    background: var(--surface); font-size: 10px;
+    color: var(--dim);
+  }
+  .tc-moves button:hover { color: var(--gold); border-color: var(--gold); }
+  .tc-detail {
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+  }
+  .tc-detail .label {
+    font-size: 7px; letter-spacing: 2px; color: var(--dim);
+    text-transform: uppercase; margin-top: 8px; margin-bottom: 4px;
+  }
+  .tc-detail textarea { width: 100%; min-height: 50px; font-size: 10px; }
+  .tc-detail button {
+    margin-top: 6px; padding: 4px 10px; border-radius: 4px;
+    background: var(--surface); font-size: 9px; letter-spacing: 1px;
+  }
+  .tc-detail .danger { color: var(--red); }
+  .tc-detail .danger:hover { background: var(--red); color: #0A0A0A; border-color: var(--red); }
+  #create-task-form {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px; margin-bottom: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  #create-task-form input, #create-task-form select, #create-task-form textarea {
+    width: 100%; font-size: 10px;
+  }
+  #create-task-form .row {
+    display: flex; gap: 6px;
+  }
+  #create-task-form .row > * { flex: 1; }
+  #create-task-form button {
+    background: var(--gold); color: #0A0A0A; border-color: var(--gold);
+    padding: 6px; font-size: 9px; letter-spacing: 1.5px; font-weight: 700;
+    border-radius: 4px;
+  }
+
+  /* ===== FLOWS TAB ===== */
+  #pane-flows { padding: 12px; overflow-y: auto; flex-direction: column; }
+  .section-head {
+    font-size: 9px; letter-spacing: 2px; color: var(--dim);
+    text-transform: uppercase; margin: 8px 0 8px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .section-head .toggle {
+    margin-left: auto; padding: 2px 8px; border-radius: 4px;
+    background: var(--surface-2); font-size: 8px; color: var(--dim);
+  }
+  #flow-templates { margin-bottom: 16px; }
+  #flow-templates.collapsed .templates-grid { display: none; }
+  .templates-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+  }
+  .template-card {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px; cursor: pointer;
+    font-size: 9px; letter-spacing: 0.5px;
+  }
+  .template-card:hover { border-color: var(--gold); }
+  .template-card b { display: block; font-size: 10px; margin-bottom: 4px; }
+  #flow-form {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px;
+    display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;
+  }
+  #flow-form .row { display: flex; gap: 6px; align-items: center; }
+  #flow-form input, #flow-form textarea { width: 100%; font-size: 10px; }
+  #flow-form button.submit {
+    background: var(--gold); color: #0A0A0A; border-color: var(--gold);
+    padding: 6px; font-size: 9px; letter-spacing: 1.5px; font-weight: 700;
+    border-radius: 4px;
+  }
+  .swatches { display: flex; gap: 6px; }
+  .swatch {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 2px solid var(--border); cursor: pointer;
+  }
+  .swatch.selected { border-color: var(--body); }
+  .flow-row {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 10px;
+    transition: border-color 250ms;
+  }
+  .flow-row.fired {
+    border-color: var(--gold);
+    animation: glowPulse 700ms ease-out;
+  }
+  .flow-color { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 14px; }
+  .flow-info { flex: 1; min-width: 0; }
+  .flow-name { font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-bottom: 4px; }
+  .flow-detail { font-size: 9px; color: var(--dim); margin-bottom: 2px; }
+  .flow-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+  .flow-actions button {
+    padding: 4px 8px; border-radius: 4px;
+    background: var(--surface); font-size: 8px; letter-spacing: 1px;
+  }
+  .flow-toggle {
+    width: 30px; height: 16px; border-radius: 8px;
+    background: var(--muted); position: relative; cursor: pointer;
+    flex: 0 0 30px;
+  }
+  .flow-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--dim); transition: all 150ms;
+  }
+  .flow-toggle.on { background: rgba(126,200,164,0.2); }
+  .flow-toggle.on::after { left: 16px; background: var(--green); }
+
+  /* ===== MEMORY TAB ===== */
+  #pane-memory { padding: 12px; overflow-y: auto; flex-direction: column; }
+  #mem-form {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px;
+    display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px;
+  }
+  #mem-form .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  #mem-form input { flex: 1; font-size: 10px; }
+  #mem-form textarea { width: 100%; font-size: 10px; min-height: 60px; }
+  #mem-types { display: flex; flex-wrap: wrap; gap: 4px; }
+  .type-pill {
+    padding: 4px 10px; border-radius: 20px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--surface);
+    font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
+  }
+  .type-pill.selected, .type-pill.active { border-width: 1px; }
+  .type-pill[data-type="contract"].selected { background: var(--blue); color: #0A0A0A; border-color: var(--blue); }
+  .type-pill[data-type="config"].selected { background: var(--green); color: #0A0A0A; border-color: var(--green); }
+  .type-pill[data-type="design"].selected { background: var(--purple); color: #0A0A0A; border-color: var(--purple); }
+  .type-pill[data-type="decision"].selected { background: var(--gold); color: #0A0A0A; border-color: var(--gold); }
+  .type-pill[data-type="error"].selected { background: var(--red); color: #0A0A0A; border-color: var(--red); }
+  .type-pill[data-type="pattern"].selected { background: var(--teal); color: #0A0A0A; border-color: var(--teal); }
+  #mem-form button.submit {
+    background: var(--gold); color: #0A0A0A; border-color: var(--gold);
+    padding: 6px 12px; font-size: 9px; letter-spacing: 1.5px; font-weight: 700;
+    border-radius: 4px; align-self: flex-start;
+  }
+  #mem-filters { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+  #mem-filters .type-pill.active {
+    background: var(--surface-2); color: var(--gold); border-color: var(--gold);
+  }
+  .mem-entry {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px; margin-bottom: 8px;
+    border-left: 3px solid var(--muted);
+  }
+  .mem-entry.contract { border-left-color: var(--blue); }
+  .mem-entry.config { border-left-color: var(--green); }
+  .mem-entry.design { border-left-color: var(--purple); }
+  .mem-entry.decision { border-left-color: var(--gold); }
+  .mem-entry.error { border-left-color: var(--red); }
+  .mem-entry.pattern { border-left-color: var(--teal); }
+  .me-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .me-key { font-size: 11px; font-weight: 700; letter-spacing: 1px; }
+  .me-value {
+    font-size: 11px; white-space: pre-wrap; word-break: break-word;
+    color: var(--body); padding: 6px 0;
+    line-height: 1.4;
+  }
+  .me-foot {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 8px; color: var(--dim); letter-spacing: 1px;
+    margin-top: 6px;
+  }
+  .me-foot button {
+    padding: 3px 8px; border-radius: 4px;
+    background: var(--surface); font-size: 8px;
+    color: var(--red);
+  }
+  .me-foot button:hover { background: var(--red); color: #0A0A0A; border-color: var(--red); }
+
+  /* ===== CONTROL TAB ===== */
+  #pane-control { flex-direction: column; padding: 0; overflow: hidden; }
+  #ctl-tabs {
+    flex: 0 0 auto; display: flex; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .ctl-tab-btn {
+    flex: 1; padding: 12px; background: transparent;
+    border: none; border-bottom: 2px solid transparent;
+    font-size: 9px; letter-spacing: 2px;
+    color: var(--dim); text-transform: uppercase;
+  }
+  .ctl-tab-btn.active { color: var(--gold); border-bottom-color: var(--gold); }
+  #ctl-content { flex: 1; overflow-y: auto; padding: 12px; }
+  .ctl-pane { display: none; }
+  .ctl-pane.active { display: block; }
+  .approval-card, .vote-card, .role-card {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 12px; margin-bottom: 8px;
+  }
+  .ap-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .ap-action { font-size: 12px; margin-bottom: 6px; }
+  .ap-detail { font-size: 10px; color: var(--dim); margin-bottom: 10px; line-height: 1.4; }
+  .ap-buttons { display: flex; gap: 6px; }
+  .ap-buttons button {
+    padding: 6px 14px; border-radius: 4px; font-size: 9px;
+    letter-spacing: 1.5px; font-weight: 700;
+  }
+  .ap-buttons .approve { background: var(--green); color: #0A0A0A; border-color: var(--green); }
+  .ap-buttons .reject { background: var(--red); color: #0A0A0A; border-color: var(--red); }
+  .approval-card.resolved { opacity: 0.5; }
+  .risk-low { color: var(--green); border-color: var(--green); }
+  .risk-medium { color: var(--gold); border-color: var(--gold); }
+  .risk-high { color: var(--red); border-color: var(--red); }
+  .vote-q { font-size: 12px; font-weight: 700; margin-bottom: 10px; }
+  .vote-option {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 8px 10px; margin-bottom: 6px;
+    cursor: pointer; position: relative; overflow: hidden;
+  }
+  .vote-option:hover { border-color: var(--dim); }
+  .vote-option.leading { border-color: var(--gold); }
+  .vote-option .vo-fill {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: rgba(201,168,76,0.08); transition: width 250ms;
+  }
+  .vote-option.leading .vo-fill { background: rgba(201,168,76,0.18); }
+  .vo-content {
+    position: relative; display: flex; align-items: center;
+    justify-content: space-between; gap: 8px;
+  }
+  .vo-label { font-size: 11px; }
+  .vo-right { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--dim); }
+  .vote-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block;
+  }
+  .role-card { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .role-card .name { font-size: 11px; font-weight: 700; flex: 0 0 80px; }
+  .role-card select { font-size: 10px; flex: 0 0 130px; }
+  .role-card .task { flex: 1; font-size: 10px; color: var(--dim); min-width: 100px;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .role-card .toggle-btn { padding: 5px 10px; border-radius: 4px;
+                           background: var(--surface); font-size: 9px; letter-spacing: 1px; }
+  .role-card .toggle-btn.paused { color: var(--red); border-color: var(--red); }
+  .role-card .wl { flex: 0 0 80px; }
+  .audit-bar {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    font-size: 9px; color: var(--dim);
+  }
+  table.audit-table {
+    width: 100%; border-collapse: collapse;
+    font-size: 10px;
+  }
+  table.audit-table th {
+    text-align: left; padding: 6px 8px;
+    font-size: 8px; letter-spacing: 1.5px; color: var(--dim);
+    border-bottom: 1px solid var(--border); text-transform: uppercase;
+  }
+  table.audit-table td {
+    padding: 6px 8px; border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.audit-table td.ts { color: var(--dim); font-size: 9px; white-space: nowrap; }
+  table.audit-table td.detail { color: var(--dim); }
+  .empty-state {
+    padding: 30px 20px; text-align: center;
+    color: var(--dim); font-size: 10px; letter-spacing: 1px;
+  }
+
+  /* Animations */
+  @keyframes ripple {
+    0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+    50% { box-shadow: 0 0 0 4px transparent; opacity: 0.6; }
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.2; }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes glowPulse {
+    0% { transform: scale(1); box-shadow: inset 0 0 0 0 var(--gold); }
+    50% { transform: scale(1.01); box-shadow: inset 0 0 0 1px var(--gold); }
+    100% { transform: scale(1); box-shadow: inset 0 0 0 0 var(--gold); }
+  }
+
+  /* Modal */
+  #modal {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 100;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  #modal.show { display: flex; }
+  #modal .box {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 18px; max-width: 360px; width: 100%;
+  }
+  #modal .box .t { font-size: 11px; letter-spacing: 1.5px; margin-bottom: 12px; }
+  #modal .box .b { font-size: 10px; color: var(--dim); margin-bottom: 16px; line-height: 1.5; }
+  #modal .box .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  #modal .box .actions button { padding: 6px 14px; border-radius: 4px; font-size: 9px; letter-spacing: 1.5px; }
+  #modal .box .confirm { background: var(--red); color: #0A0A0A; border-color: var(--red); }
+
+  /* Mobile responsive */
+  @media (max-width: 700px) {
+    #sidebar { display: none; }
+    #agent-strip { display: block; }
+    .h-title { font-size: 10px; letter-spacing: 2px; }
+    .h-left { padding: 0 10px; gap: 6px; }
+    .conn-state { display: none; }
+    .h-right { padding: 0 8px; gap: 4px; }
+    .h-action { padding: 5px 8px; font-size: 8px; }
+    .h-action span.lbl { display: none; }
+    .tab-btn { padding: 12px 10px; font-size: 8px; letter-spacing: 1.5px; }
+    .h-tabs { justify-content: flex-start; }
+
+    /* Chat: full-screen list/thread toggle */
+    #conv-list { flex: 1 1 auto; width: 100%; border-right: none; }
+    #chat-main { flex: 1 1 auto; width: 100%; }
+    #pane-chat.show-thread #conv-list { display: none; }
+    #pane-chat:not(.show-thread) #chat-main { display: none; }
+    #chat-header .back-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 4px 10px; border-radius: 4px; background: var(--surface-2);
+      font-size: 10px; color: var(--body);
+    }
+
+    /* Tasks: scroll horizontally */
+    #kanban {
+      grid-template-columns: repeat(4, 280px);
+      overflow-x: auto;
+    }
+  }
+  @media (max-width: 480px) {
+    #kanban { grid-template-columns: repeat(4, 240px); }
+    .templates-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="banner-area"></div>
+
+  <header>
+    <div class="h-left">
+      <div class="h-title">AGENT MESH</div>
+      <div class="conn-dot" id="conn-dot"></div>
+      <div class="conn-state" id="conn-state">CONNECTING…</div>
+    </div>
+    <div class="h-tabs">
+      <button class="tab-btn active" data-tab="chat">CHAT<span class="tab-badge" id="badge-chat" style="display:none"></span></button>
+      <button class="tab-btn" data-tab="tasks">TASKS<span class="tab-badge" id="badge-tasks" style="display:none"></span></button>
+      <button class="tab-btn" data-tab="flows">FLOWS<span class="tab-badge" id="badge-flows" style="display:none"></span></button>
+      <button class="tab-btn" data-tab="memory">MEMORY<span class="tab-badge" id="badge-memory" style="display:none"></span></button>
+      <button class="tab-btn" data-tab="control">CONTROL<span class="tab-badge" id="badge-control" style="display:none"></span></button>
+    </div>
+    <div class="h-right">
+      <button class="h-action gold" id="btn-broadcast" title="Broadcast to all">&#x2295;<span class="lbl"> ALL</span></button>
+      <button class="h-action red" id="btn-stop" title="Emergency stop">&#x23F9;<span class="lbl"> STOP</span></button>
+      <button class="h-action green" id="btn-resume" title="Resume all">&#x25B6;<span class="lbl"> RESUME</span></button>
+    </div>
+  </header>
+
+  <div id="agent-strip"></div>
+
+  <div id="body">
+    <aside id="sidebar">
+      <div class="sb-head">INSTANCES</div>
+      <div class="sb-instances" id="sb-instances"></div>
+      <div class="sb-stats" id="sb-stats"></div>
+    </aside>
+
+    <main id="main">
+      <!-- CHAT -->
+      <div class="tab-pane active" id="pane-chat">
+        <div id="conv-list"></div>
+        <div id="chat-main">
+          <div id="chat-header">
+            <button class="back-btn" id="back-btn">&#x2190; BACK</button>
+            <div id="chat-title">No conversation selected</div>
+            <div id="chat-typing"></div>
+            <button id="chat-clear">CLEAR</button>
+          </div>
+          <div id="chat-thread"></div>
+          <div id="compose">
+            <button class="compose-btn" id="quick-btn" title="Quick commands">&#x26A1;</button>
+            <textarea id="compose-text" placeholder="Type a message…" rows="1"></textarea>
+            <button id="send-btn" disabled>SEND</button>
+            <div id="quick-pop"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TASKS -->
+      <div class="tab-pane" id="pane-tasks">
+        <div id="tasks-filterbar">
+          <span>FILTER:</span>
+          <span id="tasks-filter-display">ALL</span>
+          <button id="tasks-clear-filter" style="display:none">CLEAR</button>
+        </div>
+        <div id="kanban">
+          <div class="col" data-col="backlog">
+            <div class="col-head"><span>BACKLOG</span><span id="cnt-backlog">0</span></div>
+            <div class="col-body" data-drop="backlog">
+              <form id="create-task-form" onsubmit="return false">
+                <input type="text" id="ct-title" placeholder="New task title…" />
+                <div class="row">
+                  <select id="ct-assignee"><option value="">— assignee —</option></select>
+                  <select id="ct-priority">
+                    <option value="low">LOW</option>
+                    <option value="medium" selected>MED</option>
+                    <option value="high">HIGH</option>
+                  </select>
+                </div>
+                <select id="ct-deps" multiple size="3" style="font-size:10px"></select>
+                <button id="ct-submit">CREATE</button>
+              </form>
+              <div id="col-backlog"></div>
+            </div>
+          </div>
+          <div class="col" data-col="in_progress">
+            <div class="col-head"><span>IN PROGRESS</span><span id="cnt-in_progress">0</span></div>
+            <div class="col-body" data-drop="in_progress"><div id="col-in_progress"></div></div>
+          </div>
+          <div class="col" data-col="review">
+            <div class="col-head"><span>REVIEW</span><span id="cnt-review">0</span></div>
+            <div class="col-body" data-drop="review"><div id="col-review"></div></div>
+          </div>
+          <div class="col" data-col="done">
+            <div class="col-head"><span>DONE</span><span id="cnt-done">0</span></div>
+            <div class="col-body" data-drop="done"><div id="col-done"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FLOWS -->
+      <div class="tab-pane" id="pane-flows">
+        <div id="flow-templates">
+          <div class="section-head">
+            TEMPLATES
+            <button class="toggle" id="tmpl-toggle">HIDE</button>
+          </div>
+          <div class="templates-grid" id="tmpl-grid"></div>
+        </div>
+        <div class="section-head">+ NEW FLOW</div>
+        <form id="flow-form" onsubmit="return false">
+          <input type="text" id="fl-name" placeholder="Flow name…" />
+          <textarea id="fl-trigger" placeholder="Trigger (e.g. when cc1 finishes T1)" rows="2"></textarea>
+          <textarea id="fl-action" placeholder="Action (e.g. notify cc2 to start T2)" rows="2"></textarea>
+          <div class="row">
+            <div class="swatches" id="fl-swatches"></div>
+          </div>
+          <button class="submit" id="fl-submit">CREATE FLOW</button>
+        </form>
+        <div class="section-head">ACTIVE FLOWS</div>
+        <div id="flow-list"></div>
+      </div>
+
+      <!-- MEMORY -->
+      <div class="tab-pane" id="pane-memory">
+        <div class="section-head">+ WRITE</div>
+        <form id="mem-form" onsubmit="return false">
+          <div class="row"><input type="text" id="mem-key" placeholder="KEY (e.g. SSE_FORMAT)" /></div>
+          <textarea id="mem-value" placeholder="VALUE"></textarea>
+          <div id="mem-types"></div>
+          <button class="submit" id="mem-submit">WRITE</button>
+        </form>
+        <div class="section-head">SHARED MEMORY</div>
+        <div id="mem-filters"></div>
+        <div id="mem-list"></div>
+      </div>
+
+      <!-- CONTROL -->
+      <div class="tab-pane" id="pane-control">
+        <div id="ctl-tabs">
+          <button class="ctl-tab-btn active" data-ctab="approvals">APPROVALS</button>
+          <button class="ctl-tab-btn" data-ctab="votes">VOTES</button>
+          <button class="ctl-tab-btn" data-ctab="roles">ROLES</button>
+          <button class="ctl-tab-btn" data-ctab="audit">AUDIT</button>
+        </div>
+        <div id="ctl-content">
+          <div class="ctl-pane active" id="ctl-approvals"></div>
+          <div class="ctl-pane" id="ctl-votes"></div>
+          <div class="ctl-pane" id="ctl-roles"></div>
+          <div class="ctl-pane" id="ctl-audit">
+            <div class="audit-bar">
+              FILTER:
+              <select id="audit-filter"><option value="">ALL AGENTS</option></select>
+            </div>
+            <table class="audit-table">
+              <thead>
+                <tr><th>TIME</th><th>AGENT</th><th>ACTION</th><th>DETAIL</th></tr>
+              </thead>
+              <tbody id="audit-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div id="modal">
+  <div class="box">
+    <div class="t" id="modal-t"></div>
+    <div class="b" id="modal-b"></div>
+    <div class="actions">
+      <button id="modal-cancel">CANCEL</button>
+      <button class="confirm" id="modal-ok">CONFIRM</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================================
+// STATE
+// ============================================================================
+const STATE = {
+  ws: null,
+  connected: false,
+  reconnectAttempt: 0,
+  reconnectTimer: null,
+  countdownTimer: null,
+  emergencyStopped: false,
+
+  // Server snapshot
+  instances: [], // {id, name, project, role, status, task, workload, online, last_seen}
+  messages: [],  // {id, from, to, text, ts, relay}
+  tasks: [],     // {id, title, assignee, priority, status, deps, progress, history, notes}
+  memory: [],    // {key, value, type, author, ts}
+  flows: [],     // {id, name, trigger, action_desc, color, enabled, status}
+  approvals: [], // {id, agent, action, risk, detail, decision, decided_at}
+  votes: [],     // {id, question, options:[{label, votes:[agent_id]}], my_vote}
+  audit: [],     // {ts, agent, action, detail}
+
+  // UI state
+  currentTab: localStorage.getItem('am.tab') || 'chat',
+  currentCTab: localStorage.getItem('am.ctab') || 'approvals',
+  currentThread: localStorage.getItem('am.thread') || '', // '' or instance id or 'all'
+  broadcastMode: localStorage.getItem('am.bcast') === '1',
+  tasksFilter: '',
+  memFilter: '',
+  selectedMemType: 'config',
+  selectedSwatch: '#C9A84C',
+  typing: {}, // instance_id -> bool
+  unread: {}, // instance_id -> count
+  expandedTask: null,
+  draggingTask: null,
+  showThread: false, // mobile
+  auditFilter: '',
+  showThreadInMobile: false,
+};
+
+const AGENT_PALETTE = ['#C9A84C', '#6B9FD4', '#7EC8A4', '#D47B6B', '#B07FD4', '#6BD4C9', '#D4A46B', '#9B6BD4'];
+const SWATCHES = AGENT_PALETTE;
+const QUICK_COMMANDS = [
+  "What are you working on?",
+  "Pause and wait.",
+  "Give me a status update.",
+  "Commit what you have.",
+  "What files did you change?",
+  "Message all other instances your progress.",
+  "What's blocking you?"
+];
+const TEMPLATES = [
+  {name: "Sequential pipeline", trigger: "When cc1 marks T1 done", action: "Assign T2 to cc2 and notify"},
+  {name: "Parallel merge gate", trigger: "When cc1 and cc2 both finish their parts", action: "Notify cc3 to integrate"},
+  {name: "Error broadcast", trigger: "When any instance reports an error", action: "Broadcast error to all"},
+  {name: "Auto-retry", trigger: "When task fails", action: "Reset to in_progress, notify assignee"},
+  {name: "Timeout escalation", trigger: "Task in_progress > 2h", action: "Escalate to orchestrator"},
+  {name: "Approval gate", trigger: "When destructive action requested", action: "Pause and request human approval"},
+  {name: "Branch and recombine", trigger: "When design decision made", action: "Fork sub-tasks to all frontend instances"},
+  {name: "Scheduled trigger", trigger: "Every hour", action: "Request status from all instances"},
+];
+const ROLE_OPTIONS = ['Orchestrator','Frontend','Backend','QA','DevOps','Security','Docs','Data'];
+const MEM_TYPES = ['contract','config','design','decision','error','pattern'];
+
+// ============================================================================
+// UTIL
+// ============================================================================
+const $ = (id) => document.getElementById(id);
+const el = (tag, opts={}, ...children) => {
+  const e = document.createElement(tag);
+  if (opts.cls) e.className = opts.cls;
+  if (opts.id) e.id = opts.id;
+  if (opts.text != null) e.textContent = String(opts.text);
+  if (opts.html != null) e.innerHTML = opts.html;
+  if (opts.attrs) for (const k in opts.attrs) e.setAttribute(k, opts.attrs[k]);
+  if (opts.style) for (const k in opts.style) e.style[k] = opts.style[k];
+  if (opts.on) for (const k in opts.on) e.addEventListener(k, opts.on[k]);
+  for (const c of children) {
+    if (c == null) continue;
+    if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+    else e.appendChild(c);
+  }
+  return e;
+};
+const clear = (n) => { while (n && n.firstChild) n.removeChild(n.firstChild); };
+
+function agentColor(id) {
+  if (!id) return '#D0D0D0';
+  if (id === 'you') return '#D0D0D0';
+  if (id === 'all') return '#D47B6B';
+  // Map by index of instance order, or by ccN trailing number, fall back to hash
+  const idx = STATE.instances.findIndex(i => i.id === id);
+  if (idx >= 0 && idx < AGENT_PALETTE.length) return AGENT_PALETTE[idx];
+  const m = /(\d+)$/.exec(id);
+  if (m) {
+    const n = parseInt(m[1], 10) - 1;
+    if (n >= 0 && n < AGENT_PALETTE.length) return AGENT_PALETTE[n];
+  }
+  // Hash
+  let h = 0;
+  for (const c of id) h = ((h << 5) - h + c.charCodeAt(0)) | 0;
+  return AGENT_PALETTE[Math.abs(h) % AGENT_PALETTE.length];
+}
+
+function agentName(id) {
+  if (id === 'you') return 'YOU';
+  if (id === 'all') return 'ALL';
+  const inst = STATE.instances.find(i => i.id === id);
+  return inst ? inst.name : id;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '';
+  const now = Date.now() / 1000;
+  const d = now - ts;
+  if (d < 60) return Math.floor(d) + 's';
+  if (d < 3600) return Math.floor(d/60) + 'm';
+  if (d < 86400) return Math.floor(d/3600) + 'h';
+  return Math.floor(d/86400) + 'd';
+}
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  return hh + ':' + mm + ':' + ss;
+}
+
+function fmtDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  return d.toISOString().slice(0,19).replace('T',' ');
+}
+
+function truncate(s, n) {
+  if (!s) return '';
+  s = String(s);
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
+function workloadColor(w) {
+  if (w == null) return 'var(--muted)';
+  if (w < 50) return 'var(--green)';
+  if (w < 80) return 'var(--gold)';
+  return 'var(--red)';
+}
+
+function isOnline(inst) {
+  if (inst.online === false) return false;
+  if (inst.online === true) return true;
+  if (inst.last_seen) {
+    return (Date.now()/1000 - inst.last_seen) < 60;
+  }
+  return false;
+}
+
+// Confirmation modal
+function confirmModal(title, body, onOk) {
+  $('modal-t').textContent = title;
+  $('modal-b').textContent = body;
+  $('modal').classList.add('show');
+  const ok = $('modal-ok'), cancel = $('modal-cancel');
+  const close = () => $('modal').classList.remove('show');
+  const handleOk = () => { close(); onOk && onOk(); cleanup(); };
+  const handleCancel = () => { close(); cleanup(); };
+  const cleanup = () => {
+    ok.removeEventListener('click', handleOk);
+    cancel.removeEventListener('click', handleCancel);
+  };
+  ok.addEventListener('click', handleOk);
+  cancel.addEventListener('click', handleCancel);
+}
+
+// ============================================================================
+// WEBSOCKET
+// ============================================================================
+function connect() {
+  const url = `ws://${location.host}/ui`;
+  setConnState('connecting');
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    return scheduleReconnect();
+  }
+  STATE.ws = ws;
+
+  ws.onopen = () => {
+    STATE.connected = true;
+    STATE.reconnectAttempt = 0;
+    if (STATE.reconnectTimer) { clearTimeout(STATE.reconnectTimer); STATE.reconnectTimer = null; }
+    if (STATE.countdownTimer) { clearInterval(STATE.countdownTimer); STATE.countdownTimer = null; }
+    setConnState('connected');
+    clearBanner();
+  };
+
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    handleServerMessage(msg);
+  };
+
+  ws.onclose = () => {
+    STATE.connected = false;
+    setConnState('disconnected');
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    showBanner('err', 'CONNECTION ERROR', true);
+  };
+}
+
+function scheduleReconnect() {
+  STATE.reconnectAttempt++;
+  const delay = Math.min(10000, 500 * Math.pow(2, STATE.reconnectAttempt - 1));
+  let remaining = Math.ceil(delay / 1000);
+  showBanner('warn', `RECONNECTING IN ${remaining}s`, true);
+  if (STATE.countdownTimer) clearInterval(STATE.countdownTimer);
+  STATE.countdownTimer = setInterval(() => {
+    remaining--;
+    if (remaining > 0) {
+      showBanner('warn', `RECONNECTING IN ${remaining}s`, true);
+    }
+  }, 1000);
+  STATE.reconnectTimer = setTimeout(() => {
+    if (STATE.countdownTimer) { clearInterval(STATE.countdownTimer); STATE.countdownTimer = null; }
+    connect();
+  }, delay);
+}
+
+function setConnState(state) {
+  const dot = $('conn-dot');
+  const lbl = $('conn-state');
+  dot.classList.remove('green', 'red');
+  if (state === 'connected') {
+    dot.classList.add('green'); lbl.textContent = 'LIVE';
+  } else if (state === 'connecting') {
+    lbl.textContent = 'CONNECTING…';
+  } else {
+    dot.classList.add('red'); lbl.textContent = 'OFFLINE';
+  }
+}
+
+function showBanner(cls, text, withRetry) {
+  const area = $('banner-area');
+  clear(area);
+  const b = el('div', {cls: 'banner ' + cls});
+  b.appendChild(el('span', {text}));
+  if (withRetry) {
+    b.appendChild(el('button', {text: 'RETRY NOW', on: {click: () => {
+      if (STATE.reconnectTimer) { clearTimeout(STATE.reconnectTimer); STATE.reconnectTimer = null; }
+      if (STATE.countdownTimer) { clearInterval(STATE.countdownTimer); STATE.countdownTimer = null; }
+      STATE.reconnectAttempt = 0;
+      connect();
+    }}}));
+  }
+  area.appendChild(b);
+}
+
+function clearBanner() {
+  if (STATE.emergencyStopped) {
+    showEmergencyBanner();
+    return;
+  }
+  clear($('banner-area'));
+}
+
+function showEmergencyBanner() {
+  const area = $('banner-area');
+  clear(area);
+  const b = el('div', {cls: 'banner err'});
+  b.appendChild(el('span', {text: 'ALL INSTANCES STOPPED — PRESS ▶ TO RESUME'}));
+  b.appendChild(el('button', {text: 'RESUME', on: {click: () => {
+    send({action: 'resume_all'});
+    STATE.emergencyStopped = false;
+    clearBanner();
+  }}}));
+  area.appendChild(b);
+}
+
+function send(payload) {
+  if (STATE.ws && STATE.ws.readyState === 1) {
+    STATE.ws.send(JSON.stringify(payload));
+    return true;
+  }
+  return false;
+}
+
+// ============================================================================
+// SERVER MESSAGE HANDLER
+// ============================================================================
+function handleServerMessage(msg) {
+  const t = msg.type;
+  if (t === 'init') {
+    if (msg.instances) STATE.instances = msg.instances;
+    if (msg.messages) STATE.messages = msg.messages;
+    if (msg.tasks) STATE.tasks = msg.tasks;
+    if (msg.memory) STATE.memory = msg.memory;
+    if (msg.flows) STATE.flows = msg.flows;
+    if (msg.approvals) STATE.approvals = msg.approvals;
+    if (msg.votes) STATE.votes = msg.votes;
+    if (msg.audit) STATE.audit = msg.audit;
+    renderAll();
+  } else if (t === 'state_update') {
+    if (msg.instances) STATE.instances = msg.instances;
+    if (msg.messages) STATE.messages = msg.messages;
+    if (msg.tasks) STATE.tasks = msg.tasks;
+    if (msg.memory) STATE.memory = msg.memory;
+    if (msg.flows) STATE.flows = msg.flows;
+    if (msg.approvals) STATE.approvals = msg.approvals;
+    if (msg.votes) STATE.votes = msg.votes;
+    if (msg.audit) STATE.audit = msg.audit;
+    renderAll();
+  } else if (t === 'message') {
+    const m = {
+      from: msg.from, to: msg.to, text: msg.text,
+      ts: msg.ts || Date.now()/1000, relay: !!msg.relay
+    };
+    STATE.messages.push(m);
+    // Unread tracking
+    if (msg.from !== 'you') {
+      const key = msg.to === 'you' ? msg.from : (msg.to === 'all' ? 'all' : msg.from);
+      if (STATE.currentTab !== 'chat' || STATE.currentThread !== key) {
+        STATE.unread[key] = (STATE.unread[key] || 0) + 1;
+      }
+    }
+    renderChat();
+    renderConvList();
+    renderTabBadges();
+  } else if (t === 'typing') {
+    STATE.typing[msg.instance_id] = !!msg.value;
+    renderConvList();
+    renderChatHeader();
+  } else if (t === 'instance_update') {
+    const idx = STATE.instances.findIndex(i => i.id === msg.id);
+    if (idx >= 0) {
+      Object.assign(STATE.instances[idx], msg);
+    } else {
+      STATE.instances.push({
+        id: msg.id, name: msg.name || msg.id, project: msg.project || '',
+        role: msg.role || '', status: msg.status || '', task: msg.task || '',
+        workload: msg.workload || 0, online: msg.online !== false,
+        last_seen: msg.last_seen || Date.now()/1000
+      });
+    }
+    renderSidebar();
+    renderAgentStrip();
+    renderConvList();
+    renderRoles();
+  } else if (t === 'approval') {
+    const idx = STATE.approvals.findIndex(a => a.id === msg.id);
+    if (idx >= 0) STATE.approvals[idx] = Object.assign(STATE.approvals[idx], msg);
+    else STATE.approvals.push(msg);
+    renderApprovals();
+    renderTabBadges();
+  } else if (t === 'flow_fired') {
+    const flow = STATE.flows.find(f => f.id === msg.id);
+    if (flow) {
+      flow.status = 'fired';
+      const row = document.querySelector(`.flow-row[data-flow-id="${msg.id}"]`);
+      if (row) {
+        row.classList.add('fired');
+        setTimeout(() => row.classList.remove('fired'), 800);
+      }
+      STATE.audit.unshift({
+        ts: Date.now()/1000, agent: 'system',
+        action: 'flow_fired', detail: flow.name
+      });
+      renderFlows();
+      renderAudit();
+    }
+  }
+}
+
+// ============================================================================
+// RENDERING
+// ============================================================================
+function renderAll() {
+  renderSidebar();
+  renderAgentStrip();
+  renderConvList();
+  renderChat();
+  renderTasks();
+  renderFlows();
+  renderMemory();
+  renderApprovals();
+  renderVotes();
+  renderRoles();
+  renderAudit();
+  renderTabBadges();
+}
+
+function renderTabBadges() {
+  const pending = STATE.approvals.filter(a => a.decision == null).length;
+  const ctl = $('badge-control');
+  if (pending > 0) { ctl.style.display = 'inline-block'; ctl.textContent = pending; }
+  else ctl.style.display = 'none';
+
+  let unreadTotal = 0;
+  for (const k in STATE.unread) unreadTotal += STATE.unread[k];
+  const chat = $('badge-chat');
+  if (unreadTotal > 0) { chat.style.display = 'inline-block'; chat.textContent = unreadTotal; }
+  else chat.style.display = 'none';
+
+  const blocked = STATE.tasks.filter(t => isBlocked(t)).length;
+  const tasks = $('badge-tasks');
+  if (blocked > 0) { tasks.style.display = 'inline-block'; tasks.textContent = blocked; }
+  else tasks.style.display = 'none';
+}
+
+// ---------- SIDEBAR ----------
+function renderSidebar() {
+  const root = $('sb-instances');
+  clear(root);
+  if (!STATE.instances.length) {
+    root.appendChild(el('div', {cls: 'empty-state', text: 'NO INSTANCES'}));
+  }
+  for (const inst of STATE.instances) {
+    const card = el('div', {
+      cls: 'agent-card' + (STATE.currentThread === inst.id ? ' active' : '')
+             + (STATE.tasksFilter === inst.id ? ' filtered' : ''),
+      on: {click: () => {
+        if (STATE.currentTab === 'tasks') {
+          STATE.tasksFilter = STATE.tasksFilter === inst.id ? '' : inst.id;
+          renderTasks();
+          renderSidebar();
+          renderAgentStrip();
+        } else {
+          selectThread(inst.id);
+          switchTab('chat');
+        }
+      }}
+    });
+    const row1 = el('div', {cls: 'ac-row1'});
+    const dotCls = isOnline(inst) ? 'online' : (inst.status === 'error' ? 'error' : '');
+    const dot = el('div', {cls: 'ac-dot ' + dotCls});
+    dot.style.color = isOnline(inst) ? 'var(--green)' : 'var(--dim)';
+    row1.appendChild(dot);
+    const name = el('div', {cls: 'ac-name', text: inst.name || inst.id});
+    name.style.color = agentColor(inst.id);
+    row1.appendChild(name);
+    if (STATE.typing[inst.id]) {
+      row1.appendChild(el('span', {cls: 'typing-dot', text: '…'}));
+    }
+    card.appendChild(row1);
+
+    card.appendChild(el('div', {cls: 'ac-role', text: (inst.role || 'idle')}));
+    card.appendChild(el('div', {cls: 'ac-task', text: inst.task || '— no task —'}));
+
+    const bar = el('div', {cls: 'workload-bar'});
+    const fill = el('div', {cls: 'workload-fill'});
+    fill.style.width = Math.max(0, Math.min(100, inst.workload || 0)) + '%';
+    fill.style.background = workloadColor(inst.workload);
+    bar.appendChild(fill);
+    card.appendChild(bar);
+
+    const meta = el('div', {cls: 'ac-meta'});
+    meta.appendChild(el('span', {text: (inst.workload || 0) + '%'}));
+    meta.appendChild(el('span', {
+      text: isOnline(inst)
+        ? (inst.task_start ? timeAgo(inst.task_start) + ' on task' : 'active')
+        : 'last seen ' + timeAgo(inst.last_seen) + ' ago'
+    }));
+    card.appendChild(meta);
+
+    root.appendChild(card);
+  }
+
+  // Stats
+  const stats = $('sb-stats');
+  clear(stats);
+  const openTasks = STATE.tasks.filter(t => t.status !== 'done').length;
+  const pendingApprovals = STATE.approvals.filter(a => a.decision == null).length;
+  const onlineCount = STATE.instances.filter(isOnline).length;
+  const statItem = (l, v) => {
+    const d = el('div', {cls: 'sb-stat'});
+    d.appendChild(el('span', {text: l}));
+    d.appendChild(el('b', {text: String(v)}));
+    return d;
+  };
+  stats.appendChild(statItem('MSGS', STATE.messages.length));
+  stats.appendChild(statItem('TASKS', openTasks));
+  stats.appendChild(statItem('MEM', STATE.memory.length));
+  stats.appendChild(statItem('PEND', pendingApprovals));
+  stats.appendChild(statItem('ONLINE', onlineCount));
+  stats.appendChild(statItem('FLOWS', STATE.flows.length));
+}
+
+function renderAgentStrip() {
+  const root = $('agent-strip');
+  clear(root);
+  for (const inst of STATE.instances) {
+    const pill = el('div', {
+      cls: 'agent-pill' + (STATE.tasksFilter === inst.id ? ' filtered' : ''),
+      on: {click: () => {
+        if (STATE.currentTab === 'tasks') {
+          STATE.tasksFilter = STATE.tasksFilter === inst.id ? '' : inst.id;
+          renderTasks();
+        } else {
+          selectThread(inst.id);
+          switchTab('chat');
+        }
+      }}
+    });
+    const dot = el('div', {cls: 'ac-dot ' + (isOnline(inst) ? 'online' : '')});
+    pill.appendChild(dot);
+    const name = el('span', {text: inst.name || inst.id});
+    name.style.color = agentColor(inst.id);
+    pill.appendChild(name);
+    pill.appendChild(el('span', {text: ' ' + (inst.workload || 0) + '%', style: {color: 'var(--dim)'}}));
+    root.appendChild(pill);
+  }
+}
+
+// ---------- CHAT ----------
+function renderConvList() {
+  const root = $('conv-list');
+  clear(root);
+
+  // Broadcast row
+  const bRow = el('div', {
+    cls: 'conv-row' + (STATE.currentThread === 'all' ? ' active' : ''),
+    on: {click: () => selectThread('all')}
+  });
+  const br1 = el('div', {cls: 'cr-row1'});
+  br1.appendChild(el('div', {cls: 'cr-name', text: 'BROADCAST'}));
+  if (STATE.unread['all']) br1.appendChild(el('div', {cls: 'unread-dot'}));
+  bRow.appendChild(br1);
+  const bcastMsgs = STATE.messages.filter(m => m.to === 'all');
+  const last = bcastMsgs[bcastMsgs.length-1];
+  bRow.appendChild(el('div', {cls: 'cr-preview',
+    text: last ? truncate(last.text, 60) : 'No broadcasts yet'}));
+  root.appendChild(bRow);
+
+  // Instance rows
+  for (const inst of STATE.instances) {
+    const row = el('div', {
+      cls: 'conv-row' + (STATE.currentThread === inst.id ? ' active' : ''),
+      on: {click: () => selectThread(inst.id)}
+    });
+    const r1 = el('div', {cls: 'cr-row1'});
+    const dot = el('div', {cls: 'ac-dot ' + (isOnline(inst) ? 'online' : '')});
+    r1.appendChild(dot);
+    const nm = el('div', {cls: 'cr-name', text: inst.name || inst.id});
+    nm.style.color = agentColor(inst.id);
+    r1.appendChild(nm);
+    if (STATE.typing[inst.id]) {
+      r1.appendChild(el('span', {cls: 'typing-dot', text: '…'}));
+    }
+    if (STATE.unread[inst.id]) r1.appendChild(el('div', {cls: 'unread-dot'}));
+    row.appendChild(r1);
+    const lastMsg = [...STATE.messages].reverse().find(m =>
+      (m.from === inst.id && (m.to === 'you' || m.to == null)) ||
+      (m.from === 'you' && m.to === inst.id) ||
+      (m.relay && (m.from === inst.id || m.to === inst.id))
+    );
+    row.appendChild(el('div', {cls: 'cr-preview',
+      text: lastMsg ? truncate(lastMsg.text, 60) : 'No messages yet'}));
+    root.appendChild(row);
+  }
+}
+
+function selectThread(id) {
+  STATE.currentThread = id;
+  STATE.unread[id] = 0;
+  localStorage.setItem('am.thread', id);
+  const pane = $('pane-chat');
+  pane.classList.add('show-thread');
+  STATE.showThreadInMobile = true;
+  renderConvList();
+  renderChat();
+  renderChatHeader();
+  renderTabBadges();
+}
+
+function renderChatHeader() {
+  const title = $('chat-title');
+  const typing = $('chat-typing');
+  const t = STATE.currentThread;
+  if (!t) { title.textContent = 'No conversation selected'; typing.textContent = ''; return; }
+  if (t === 'all') {
+    title.textContent = 'BROADCAST · ALL INSTANCES';
+    title.style.color = 'var(--red)';
+  } else {
+    title.textContent = agentName(t);
+    title.style.color = agentColor(t);
+  }
+  typing.textContent = STATE.typing[t] ? 'typing…' : '';
+}
+
+function isInThread(m, threadId) {
+  if (threadId === 'all') return m.to === 'all' || m.from === 'all';
+  return (m.from === threadId && (m.to === 'you' || m.to == null)) ||
+         (m.from === 'you' && m.to === threadId) ||
+         (m.relay && (m.from === threadId || m.to === threadId));
+}
+
+function renderChat() {
+  const thread = $('chat-thread');
+  clear(thread);
+  if (!STATE.currentThread) {
+    thread.appendChild(el('div', {cls: 'empty-state', text: 'Select a conversation to start'}));
+    return;
+  }
+  const msgs = STATE.messages.filter(m => isInThread(m, STATE.currentThread));
+  if (!msgs.length) {
+    thread.appendChild(el('div', {cls: 'empty-state', text: 'No messages yet'}));
+  }
+  for (const m of msgs) {
+    const isYou = m.from === 'you';
+    const isRelay = m.relay && !isYou;
+    const cls = 'bubble ' + (isYou ? 'you' : (isRelay ? 'relay' : 'them'));
+    const bubble = el('div', {cls});
+    bubble.appendChild(el('div', {text: m.text}));
+    const meta = el('div', {cls: 'meta'});
+    let metaText;
+    if (isYou) {
+      metaText = 'YOU → ' + agentName(m.to) + ' · ' + fmtTime(m.ts);
+    } else if (isRelay) {
+      metaText = '[RELAY] ' + agentName(m.from) + ' → ' + agentName(m.to) + ' · ' + fmtTime(m.ts);
+    } else {
+      metaText = agentName(m.from) + ' · ' + fmtTime(m.ts);
+    }
+    meta.textContent = metaText;
+    bubble.appendChild(meta);
+    thread.appendChild(bubble);
+  }
+  thread.scrollTop = thread.scrollHeight;
+  renderChatHeader();
+}
+
+// ---------- TASKS ----------
+function isBlocked(task) {
+  if (!task.deps || !task.deps.length) return false;
+  if (task.status === 'done') return false;
+  return task.deps.some(d => {
+    const dep = STATE.tasks.find(t => t.id === d);
+    return !dep || dep.status !== 'done';
+  });
+}
+
+function renderTasks() {
+  // Update assignee + deps options
+  const asSel = $('ct-assignee');
+  clear(asSel);
+  asSel.appendChild(el('option', {text: '— assignee —', attrs: {value: ''}}));
+  for (const i of STATE.instances) {
+    asSel.appendChild(el('option', {text: i.name || i.id, attrs: {value: i.id}}));
+  }
+  const depsSel = $('ct-deps');
+  clear(depsSel);
+  for (const t of STATE.tasks) {
+    depsSel.appendChild(el('option', {text: t.id + ': ' + truncate(t.title, 30), attrs: {value: t.id}}));
+  }
+
+  // Filter bar
+  $('tasks-filter-display').textContent = STATE.tasksFilter
+    ? (agentName(STATE.tasksFilter).toUpperCase())
+    : 'ALL';
+  $('tasks-clear-filter').style.display = STATE.tasksFilter ? '' : 'none';
+
+  const cols = ['backlog', 'in_progress', 'review', 'done'];
+  for (const status of cols) {
+    const root = $('col-' + status);
+    clear(root);
+    let tasks = STATE.tasks.filter(t => t.status === status);
+    if (STATE.tasksFilter) tasks = tasks.filter(t => t.assignee === STATE.tasksFilter);
+    $('cnt-' + status).textContent = tasks.length;
+    if (!tasks.length) {
+      root.appendChild(el('div', {cls: 'empty-state', text: '—'}));
+    }
+    for (const t of tasks) {
+      root.appendChild(renderTaskCard(t));
+    }
+  }
+}
+
+function renderTaskCard(t) {
+  const blocked = isBlocked(t);
+  const card = el('div', {
+    cls: 'task-card' + (blocked ? ' blocked' : ''),
+    attrs: {draggable: 'true', 'data-task-id': t.id}
+  });
+  card.addEventListener('dragstart', (e) => {
+    STATE.draggingTask = t.id;
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  card.addEventListener('dragend', () => { STATE.draggingTask = null; });
+  card.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    STATE.expandedTask = STATE.expandedTask === t.id ? null : t.id;
+    renderTasks();
+  });
+
+  card.appendChild(el('div', {cls: 'tc-title', text: t.id ? `[${t.id}] ${t.title}` : t.title}));
+
+  const meta = el('div', {cls: 'tc-meta'});
+  if (t.assignee) {
+    const aPill = el('span', {cls: 'pill agent', text: agentName(t.assignee)});
+    aPill.style.color = agentColor(t.assignee);
+    aPill.style.borderColor = agentColor(t.assignee);
+    meta.appendChild(aPill);
+  }
+  if (t.priority) {
+    meta.appendChild(el('span', {cls: 'pill priority-' + t.priority, text: t.priority.toUpperCase()}));
+  }
+  if (blocked) {
+    meta.appendChild(el('span', {cls: 'pill blocked', text: 'BLOCKED'}));
+  }
+  card.appendChild(meta);
+
+  if (t.deps && t.deps.length) {
+    card.appendChild(el('div', {cls: 'tc-deps', text: 'DEPS: ' + t.deps.join(', ')}));
+  }
+  if (t.status === 'in_progress' && t.progress != null) {
+    const prog = el('div', {cls: 'workload-bar tc-progress'});
+    const fill = el('div', {cls: 'workload-fill'});
+    fill.style.width = (t.progress || 0) + '%';
+    fill.style.background = 'var(--gold)';
+    prog.appendChild(fill);
+    card.appendChild(prog);
+  }
+
+  // Moves
+  const moves = el('div', {cls: 'tc-moves'});
+  const order = ['backlog', 'in_progress', 'review', 'done'];
+  const idx = order.indexOf(t.status);
+  if (idx > 0) {
+    moves.appendChild(el('button', {text: '←', attrs: {title: 'Move left'},
+      on: {click: (e) => { e.stopPropagation(); send({action: 'move_task', id: t.id, status: order[idx-1]}); }}}));
+  }
+  if (idx < order.length - 1) {
+    moves.appendChild(el('button', {text: '→', attrs: {title: 'Move right'},
+      on: {click: (e) => { e.stopPropagation(); send({action: 'move_task', id: t.id, status: order[idx+1]}); }}}));
+  }
+  card.appendChild(moves);
+
+  if (STATE.expandedTask === t.id) {
+    card.appendChild(renderTaskDetail(t));
+  }
+  return card;
+}
+
+function renderTaskDetail(t) {
+  const d = el('div', {cls: 'tc-detail'});
+
+  d.appendChild(el('div', {cls: 'label', text: 'ASSIGNEE'}));
+  const aSel = el('select');
+  aSel.appendChild(el('option', {text: '—', attrs: {value: ''}}));
+  for (const i of STATE.instances) {
+    const opt = el('option', {text: i.name || i.id, attrs: {value: i.id}});
+    if (t.assignee === i.id) opt.selected = true;
+    aSel.appendChild(opt);
+  }
+  aSel.addEventListener('change', () => {
+    send({action: 'update_task', id: t.id, assignee: aSel.value});
+  });
+  aSel.addEventListener('click', (e) => e.stopPropagation());
+  d.appendChild(aSel);
+
+  d.appendChild(el('div', {cls: 'label', text: 'PRIORITY'}));
+  const pSel = el('select');
+  for (const p of ['low','medium','high']) {
+    const opt = el('option', {text: p.toUpperCase(), attrs: {value: p}});
+    if (t.priority === p) opt.selected = true;
+    pSel.appendChild(opt);
+  }
+  pSel.addEventListener('change', () => send({action: 'update_task', id: t.id, priority: pSel.value}));
+  pSel.addEventListener('click', (e) => e.stopPropagation());
+  d.appendChild(pSel);
+
+  if (t.deps && t.deps.length) {
+    d.appendChild(el('div', {cls: 'label', text: 'DEP GRAPH'}));
+    const dg = el('div', {style: {fontSize: '10px'}});
+    for (const dep of t.deps) {
+      const depT = STATE.tasks.find(x => x.id === dep);
+      const ln = el('div');
+      ln.textContent = (depT && depT.status === 'done' ? '✓ ' : '… ') + dep + (depT ? ' — ' + truncate(depT.title, 30) : ' (missing)');
+      ln.style.color = depT && depT.status === 'done' ? 'var(--green)' : 'var(--red)';
+      dg.appendChild(ln);
+    }
+    const arrow = el('div', {text: '↓ ' + t.id, style: {color: 'var(--dim)', marginTop: '4px'}});
+    dg.appendChild(arrow);
+    d.appendChild(dg);
+  }
+
+  if (t.history && t.history.length) {
+    d.appendChild(el('div', {cls: 'label', text: 'HISTORY'}));
+    const h = el('div', {style: {fontSize: '9px', color: 'var(--dim)'}});
+    for (const ev of t.history.slice(-10)) {
+      h.appendChild(el('div', {text: fmtTime(ev.ts) + ' · ' + ev.event}));
+    }
+    d.appendChild(h);
+  }
+
+  d.appendChild(el('div', {cls: 'label', text: 'NOTES'}));
+  const notesArea = el('textarea', {attrs: {placeholder: 'notes…'}});
+  notesArea.value = t.notes || '';
+  notesArea.addEventListener('click', (e) => e.stopPropagation());
+  const saveBtn = el('button', {text: 'SAVE NOTES',
+    on: {click: (e) => {
+      e.stopPropagation();
+      send({action: 'update_task', id: t.id, notes: notesArea.value});
+    }}});
+  d.appendChild(notesArea);
+  d.appendChild(saveBtn);
+
+  d.appendChild(el('button', {text: 'DELETE', cls: 'danger',
+    style: {marginLeft: '6px'},
+    on: {click: (e) => {
+      e.stopPropagation();
+      confirmModal('DELETE TASK?', `Permanently delete [${t.id}] ${t.title}?`, () => {
+        send({action: 'delete_task', id: t.id});
+      });
+    }}}));
+
+  return d;
+}
+
+// ---------- FLOWS ----------
+function renderFlows() {
+  // Templates
+  const tg = $('tmpl-grid');
+  clear(tg);
+  for (const t of TEMPLATES) {
+    const card = el('div', {cls: 'template-card',
+      on: {click: () => {
+        $('fl-name').value = t.name;
+        $('fl-trigger').value = t.trigger;
+        $('fl-action').value = t.action;
+      }}});
+    card.appendChild(el('b', {text: t.name}));
+    card.appendChild(el('div', {text: 'IF: ' + truncate(t.trigger, 50), style: {color: 'var(--dim)', marginBottom: '2px'}}));
+    card.appendChild(el('div', {text: 'THEN: ' + truncate(t.action, 50), style: {color: 'var(--dim)'}}));
+    tg.appendChild(card);
+  }
+
+  // Swatches
+  const sw = $('fl-swatches');
+  if (!sw.childElementCount) {
+    for (const c of SWATCHES) {
+      const s = el('div', {cls: 'swatch' + (c === STATE.selectedSwatch ? ' selected' : ''),
+        style: {background: c}, attrs: {'data-color': c},
+        on: {click: () => {
+          STATE.selectedSwatch = c;
+          for (const sib of sw.children) sib.classList.toggle('selected', sib.dataset.color === c);
+        }}});
+      sw.appendChild(s);
+    }
+  }
+
+  // List
+  const root = $('flow-list');
+  clear(root);
+  if (!STATE.flows.length) {
+    root.appendChild(el('div', {cls: 'empty-state', text: 'NO FLOWS'}));
+  }
+  for (const f of STATE.flows) {
+    const row = el('div', {cls: 'flow-row', attrs: {'data-flow-id': f.id}});
+    const color = el('div', {cls: 'flow-color'});
+    color.style.background = f.color || '#C9A84C';
+    row.appendChild(color);
+    const info = el('div', {cls: 'flow-info'});
+    info.appendChild(el('div', {cls: 'flow-name', text: f.name}));
+    info.appendChild(el('div', {cls: 'flow-detail', text: 'IF: ' + (f.trigger || '')}));
+    info.appendChild(el('div', {cls: 'flow-detail', text: 'THEN: ' + (f.action_desc || f.action || '')}));
+    const stat = el('span', {cls: 'pill', text: (f.status || 'waiting').toUpperCase()});
+    stat.style.marginTop = '4px'; stat.style.display = 'inline-block';
+    info.appendChild(stat);
+    row.appendChild(info);
+    const actions = el('div', {cls: 'flow-actions'});
+    const toggle = el('div', {cls: 'flow-toggle' + (f.enabled !== false ? ' on' : ''),
+      on: {click: () => send({action: 'toggle_flow', id: f.id})}});
+    actions.appendChild(toggle);
+    actions.appendChild(el('button', {text: 'FIRE',
+      on: {click: () => send({action: 'fire_flow', id: f.id})}}));
+    actions.appendChild(el('button', {text: 'DEL',
+      on: {click: () => confirmModal('DELETE FLOW?', f.name, () => send({action: 'delete_flow', id: f.id}))}}));
+    row.appendChild(actions);
+    root.appendChild(row);
+  }
+}
+
+// ---------- MEMORY ----------
+function renderMemory() {
+  // Type pills in form
+  const tForm = $('mem-types');
+  clear(tForm);
+  for (const ty of MEM_TYPES) {
+    const p = el('div', {cls: 'type-pill' + (ty === STATE.selectedMemType ? ' selected' : ''),
+      attrs: {'data-type': ty}, text: ty,
+      on: {click: () => {
+        STATE.selectedMemType = ty;
+        renderMemory();
+      }}});
+    tForm.appendChild(p);
+  }
+
+  // Filter pills
+  const filters = $('mem-filters');
+  clear(filters);
+  const allP = el('div', {cls: 'type-pill' + (STATE.memFilter === '' ? ' active' : ''),
+    text: 'ALL', on: {click: () => { STATE.memFilter = ''; renderMemory(); }}});
+  filters.appendChild(allP);
+  for (const ty of MEM_TYPES) {
+    const p = el('div', {cls: 'type-pill' + (STATE.memFilter === ty ? ' active' : ''),
+      attrs: {'data-type': ty}, text: ty,
+      on: {click: () => { STATE.memFilter = ty; renderMemory(); }}});
+    filters.appendChild(p);
+  }
+
+  // List
+  const list = $('mem-list');
+  clear(list);
+  let entries = STATE.memory;
+  if (STATE.memFilter) entries = entries.filter(e => e.type === STATE.memFilter);
+  entries = [...entries].sort((a,b) => (b.ts||0) - (a.ts||0));
+  if (!entries.length) {
+    list.appendChild(el('div', {cls: 'empty-state', text: 'NO MEMORY ENTRIES'}));
+  }
+  for (const m of entries) {
+    const card = el('div', {cls: 'mem-entry ' + (m.type || '')});
+    const head = el('div', {cls: 'me-head'});
+    head.appendChild(el('span', {cls: 'pill', text: (m.type || 'unknown').toUpperCase(),
+      style: {color: typeColor(m.type), borderColor: typeColor(m.type)}}));
+    head.appendChild(el('span', {cls: 'me-key', text: m.key}));
+    card.appendChild(head);
+    card.appendChild(el('div', {cls: 'me-value', text: m.value}));
+    const foot = el('div', {cls: 'me-foot'});
+    const left = el('span');
+    const author = el('span', {cls: 'pill', text: agentName(m.author || 'unknown'),
+      style: {color: agentColor(m.author), borderColor: agentColor(m.author), marginRight: '6px'}});
+    left.appendChild(author);
+    left.appendChild(document.createTextNode(m.ts ? fmtDate(m.ts) : ''));
+    foot.appendChild(left);
+    foot.appendChild(el('button', {text: 'DELETE',
+      on: {click: () => confirmModal('DELETE MEMORY?',
+        m.key, () => send({action: 'memory_delete', key: m.key}))}}));
+    card.appendChild(foot);
+    list.appendChild(card);
+  }
+}
+
+function typeColor(type) {
+  return {
+    contract: 'var(--blue)', config: 'var(--green)', design: 'var(--purple)',
+    decision: 'var(--gold)', error: 'var(--red)', pattern: 'var(--teal)'
+  }[type] || 'var(--dim)';
+}
+
+// ---------- CONTROL ----------
+function renderApprovals() {
+  const root = $('ctl-approvals');
+  clear(root);
+  const pending = STATE.approvals.filter(a => a.decision == null);
+  const resolved = STATE.approvals.filter(a => a.decision != null);
+  if (!pending.length && !resolved.length) {
+    root.appendChild(el('div', {cls: 'empty-state', text: 'NO APPROVALS'}));
+    return;
+  }
+  if (pending.length) {
+    root.appendChild(el('div', {cls: 'section-head', text: 'PENDING (' + pending.length + ')'}));
+    for (const a of pending) root.appendChild(renderApprovalCard(a, false));
+  }
+  if (resolved.length) {
+    root.appendChild(el('div', {cls: 'section-head', text: 'RESOLVED'}));
+    for (const a of resolved.slice(-20).reverse()) root.appendChild(renderApprovalCard(a, true));
+  }
+}
+
+function renderApprovalCard(a, resolved) {
+  const card = el('div', {cls: 'approval-card' + (resolved ? ' resolved' : '')});
+  const head = el('div', {cls: 'ap-head'});
+  const ag = el('span', {cls: 'pill agent', text: agentName(a.agent || 'unknown')});
+  ag.style.color = agentColor(a.agent); ag.style.borderColor = agentColor(a.agent);
+  head.appendChild(ag);
+  head.appendChild(el('span', {cls: 'pill risk-' + (a.risk || 'low'), text: 'RISK: ' + (a.risk || 'low').toUpperCase()}));
+  if (resolved) {
+    head.appendChild(el('span', {cls: 'pill', text: a.decision ? 'APPROVED' : 'REJECTED',
+      style: {color: a.decision ? 'var(--green)' : 'var(--red)',
+              borderColor: a.decision ? 'var(--green)' : 'var(--red)'}}));
+  }
+  card.appendChild(head);
+  card.appendChild(el('div', {cls: 'ap-action', text: a.action || ''}));
+  if (a.detail) card.appendChild(el('div', {cls: 'ap-detail', text: a.detail}));
+  if (!resolved) {
+    const btns = el('div', {cls: 'ap-buttons'});
+    btns.appendChild(el('button', {cls: 'approve', text: 'APPROVE',
+      on: {click: () => send({action: 'approve', id: a.id, decision: true})}}));
+    btns.appendChild(el('button', {cls: 'reject', text: 'REJECT',
+      on: {click: () => send({action: 'approve', id: a.id, decision: false})}}));
+    card.appendChild(btns);
+  }
+  return card;
+}
+
+function renderVotes() {
+  const root = $('ctl-votes');
+  clear(root);
+  if (!STATE.votes.length) {
+    root.appendChild(el('div', {cls: 'empty-state', text: 'NO ACTIVE VOTES'}));
+    return;
+  }
+  for (const v of STATE.votes) {
+    const card = el('div', {cls: 'vote-card'});
+    card.appendChild(el('div', {cls: 'vote-q', text: v.question}));
+    const options = v.options || [];
+    const counts = options.map(o => (o.votes || []).length);
+    const max = Math.max(1, ...counts);
+    const leadIdx = counts.indexOf(Math.max(...counts));
+    for (let i = 0; i < options.length; i++) {
+      const o = options[i];
+      const cnt = counts[i];
+      const opt = el('div', {cls: 'vote-option' + (i === leadIdx && cnt > 0 ? ' leading' : ''),
+        on: {click: () => send({action: 'vote', vote_id: v.id, option: o.label})}});
+      const fill = el('div', {cls: 'vo-fill'});
+      fill.style.width = (cnt / max * 100) + '%';
+      opt.appendChild(fill);
+      const content = el('div', {cls: 'vo-content'});
+      content.appendChild(el('span', {cls: 'vo-label', text: o.label}));
+      const right = el('span', {cls: 'vo-right'});
+      for (const voter of (o.votes || [])) {
+        const d = el('span', {cls: 'vote-dot'});
+        d.style.background = agentColor(voter);
+        d.title = agentName(voter);
+        right.appendChild(d);
+      }
+      right.appendChild(el('span', {text: cnt + ' votes'}));
+      content.appendChild(right);
+      opt.appendChild(content);
+      card.appendChild(opt);
+    }
+    root.appendChild(card);
+  }
+}
+
+function renderRoles() {
+  const root = $('ctl-roles');
+  clear(root);
+  if (!STATE.instances.length) {
+    root.appendChild(el('div', {cls: 'empty-state', text: 'NO INSTANCES'}));
+    return;
+  }
+  for (const inst of STATE.instances) {
+    const card = el('div', {cls: 'role-card'});
+    const nm = el('div', {cls: 'name', text: inst.name || inst.id});
+    nm.style.color = agentColor(inst.id);
+    card.appendChild(nm);
+    const sel = el('select');
+    sel.appendChild(el('option', {text: '— role —', attrs: {value: ''}}));
+    for (const r of ROLE_OPTIONS) {
+      const opt = el('option', {text: r, attrs: {value: r}});
+      if ((inst.role || '').toLowerCase() === r.toLowerCase()) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    sel.addEventListener('change', () => send({action: 'update_role', id: inst.id, role: sel.value}));
+    card.appendChild(sel);
+    const taskTxt = el('div', {cls: 'task', text: inst.task || '— idle —'});
+    card.appendChild(taskTxt);
+    const wlBox = el('div', {cls: 'wl'});
+    const bar = el('div', {cls: 'workload-bar'});
+    const fill = el('div', {cls: 'workload-fill'});
+    fill.style.width = (inst.workload || 0) + '%';
+    fill.style.background = workloadColor(inst.workload);
+    bar.appendChild(fill);
+    wlBox.appendChild(bar);
+    wlBox.appendChild(el('span', {text: (inst.workload || 0) + '%',
+      style: {fontSize: '8px', color: 'var(--dim)'}}));
+    card.appendChild(wlBox);
+    const paused = inst.status === 'paused';
+    card.appendChild(el('button', {cls: 'toggle-btn' + (paused ? ' paused' : ''),
+      text: paused ? 'RESUME' : 'PAUSE',
+      on: {click: () => send({action: 'toggle_instance', id: inst.id})}}));
+    root.appendChild(card);
+  }
+}
+
+function renderAudit() {
+  // Filter dropdown
+  const filt = $('audit-filter');
+  const cur = filt.value;
+  clear(filt);
+  filt.appendChild(el('option', {text: 'ALL AGENTS', attrs: {value: ''}}));
+  const agents = new Set(STATE.audit.map(a => a.agent).filter(Boolean));
+  for (const a of agents) {
+    filt.appendChild(el('option', {text: agentName(a), attrs: {value: a}}));
+  }
+  filt.value = STATE.auditFilter;
+
+  const body = $('audit-body');
+  clear(body);
+  let rows = STATE.audit;
+  if (STATE.auditFilter) rows = rows.filter(a => a.agent === STATE.auditFilter);
+  rows = [...rows].sort((a,b) => (b.ts || 0) - (a.ts || 0)).slice(0, 500);
+  if (!rows.length) {
+    const tr = el('tr');
+    const td = el('td', {attrs: {colspan: '4'}, cls: 'detail'});
+    td.style.padding = '20px';
+    td.style.textAlign = 'center';
+    td.style.color = 'var(--dim)';
+    td.textContent = 'NO EVENTS';
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
+  for (const r of rows) {
+    const tr = el('tr');
+    tr.appendChild(el('td', {cls: 'ts', text: fmtDate(r.ts)}));
+    const ag = el('td');
+    const pill = el('span', {cls: 'pill', text: agentName(r.agent || 'system')});
+    pill.style.color = agentColor(r.agent);
+    pill.style.borderColor = agentColor(r.agent);
+    ag.appendChild(pill);
+    tr.appendChild(ag);
+    tr.appendChild(el('td', {text: r.action || ''}));
+    tr.appendChild(el('td', {cls: 'detail', text: r.detail || ''}));
+    body.appendChild(tr);
+  }
+}
+
+// ============================================================================
+// EVENT WIRING
+// ============================================================================
+function switchTab(tab) {
+  STATE.currentTab = tab;
+  localStorage.setItem('am.tab', tab);
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + tab));
+}
+
+function switchCTab(tab) {
+  STATE.currentCTab = tab;
+  localStorage.setItem('am.ctab', tab);
+  document.querySelectorAll('.ctl-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.ctab === tab));
+  document.querySelectorAll('.ctl-pane').forEach(p => p.classList.toggle('active', p.id === 'ctl-' + tab));
+}
+
+function wire() {
+  // Tab buttons
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.addEventListener('click', () => switchTab(b.dataset.tab));
+  });
+  document.querySelectorAll('.ctl-tab-btn').forEach(b => {
+    b.addEventListener('click', () => switchCTab(b.dataset.ctab));
+  });
+  switchTab(STATE.currentTab);
+  switchCTab(STATE.currentCTab);
+
+  // Compose
+  const composeText = $('compose-text');
+  const sendBtn = $('send-btn');
+  const compose = $('compose');
+  composeText.addEventListener('input', () => {
+    sendBtn.disabled = composeText.value.trim().length === 0;
+    composeText.style.height = 'auto';
+    composeText.style.height = Math.min(120, composeText.scrollHeight) + 'px';
+  });
+  composeText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendCurrent();
+    }
+  });
+  sendBtn.addEventListener('click', sendCurrent);
+
+  // Quick commands
+  const quickPop = $('quick-pop');
+  for (const cmd of QUICK_COMMANDS) {
+    quickPop.appendChild(el('button', {text: cmd,
+      on: {click: () => {
+        composeText.value = cmd;
+        composeText.dispatchEvent(new Event('input'));
+        quickPop.classList.remove('show');
+        composeText.focus();
+      }}}));
+  }
+  $('quick-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    quickPop.classList.toggle('show');
+  });
+  document.addEventListener('click', (e) => {
+    if (!quickPop.contains(e.target) && e.target !== $('quick-btn')) {
+      quickPop.classList.remove('show');
+    }
+  });
+
+  // Broadcast button
+  $('btn-broadcast').addEventListener('click', () => toggleBroadcast());
+  applyBroadcastUI();
+
+  // Emergency stop / resume
+  $('btn-stop').addEventListener('click', () => {
+    confirmModal('EMERGENCY STOP', 'Halt all instances and broadcast STOP?', () => {
+      send({action: 'emergency_stop'});
+      STATE.emergencyStopped = true;
+      showEmergencyBanner();
+    });
+  });
+  $('btn-resume').addEventListener('click', () => {
+    send({action: 'resume_all'});
+    STATE.emergencyStopped = false;
+    clearBanner();
+  });
+
+  // Back btn (mobile)
+  $('back-btn').addEventListener('click', () => {
+    const pane = $('pane-chat');
+    pane.classList.remove('show-thread');
+    STATE.showThreadInMobile = false;
+  });
+
+  // Chat clear
+  $('chat-clear').addEventListener('click', () => {
+    if (STATE.currentThread) {
+      confirmModal('CLEAR MESSAGES', 'Clear message history with ' + agentName(STATE.currentThread) + '?', () => {
+        send({action: 'clear_messages', thread: STATE.currentThread});
+      });
+    }
+  });
+
+  // Create task
+  $('ct-submit').addEventListener('click', () => {
+    const title = $('ct-title').value.trim();
+    if (!title) return;
+    const assignee = $('ct-assignee').value;
+    const priority = $('ct-priority').value;
+    const deps = Array.from($('ct-deps').selectedOptions).map(o => o.value);
+    send({action: 'create_task', title, assignee, priority, deps});
+    $('ct-title').value = '';
+    $('ct-assignee').value = '';
+    $('ct-priority').value = 'medium';
+    Array.from($('ct-deps').options).forEach(o => o.selected = false);
+  });
+  $('tasks-clear-filter').addEventListener('click', () => {
+    STATE.tasksFilter = '';
+    renderTasks();
+    renderSidebar();
+    renderAgentStrip();
+  });
+
+  // Kanban drag/drop
+  document.querySelectorAll('[data-drop]').forEach(zone => {
+    zone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      if (STATE.draggingTask) {
+        send({action: 'move_task', id: STATE.draggingTask, status: zone.dataset.drop});
+      }
+    });
+  });
+
+  // Flow form
+  $('fl-submit').addEventListener('click', () => {
+    const name = $('fl-name').value.trim();
+    if (!name) return;
+    const trigger = $('fl-trigger').value.trim();
+    const action_desc = $('fl-action').value.trim();
+    send({action: 'create_flow', name, trigger, action_desc, color: STATE.selectedSwatch});
+    $('fl-name').value = '';
+    $('fl-trigger').value = '';
+    $('fl-action').value = '';
+  });
+  $('tmpl-toggle').addEventListener('click', () => {
+    const sec = $('flow-templates');
+    sec.classList.toggle('collapsed');
+    $('tmpl-toggle').textContent = sec.classList.contains('collapsed') ? 'SHOW' : 'HIDE';
+  });
+
+  // Memory form
+  $('mem-submit').addEventListener('click', () => {
+    const key = $('mem-key').value.trim();
+    const value = $('mem-value').value;
+    if (!key || !value) return;
+    send({action: 'memory_write', key, value, mem_type: STATE.selectedMemType});
+    $('mem-key').value = '';
+    $('mem-value').value = '';
+  });
+
+  // Audit filter
+  $('audit-filter').addEventListener('change', (e) => {
+    STATE.auditFilter = e.target.value;
+    renderAudit();
+  });
+
+  // Visibility reconnect
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && !STATE.connected) {
+      if (STATE.reconnectTimer) { clearTimeout(STATE.reconnectTimer); STATE.reconnectTimer = null; }
+      STATE.reconnectAttempt = 0;
+      connect();
+    }
+  });
+}
+
+function sendCurrent() {
+  const composeText = $('compose-text');
+  const text = composeText.value.trim();
+  if (!text) return;
+  const to = STATE.broadcastMode ? 'all' : (STATE.currentThread || '');
+  if (!to) return;
+  send({action: 'send', to, text});
+  // Optimistic append
+  STATE.messages.push({from: 'you', to, text, ts: Date.now()/1000, relay: false});
+  composeText.value = '';
+  composeText.style.height = 'auto';
+  $('send-btn').disabled = true;
+  renderChat();
+  renderConvList();
+}
+
+function toggleBroadcast() {
+  STATE.broadcastMode = !STATE.broadcastMode;
+  localStorage.setItem('am.bcast', STATE.broadcastMode ? '1' : '0');
+  if (STATE.broadcastMode) {
+    selectThread('all');
+    switchTab('chat');
+  }
+  applyBroadcastUI();
+}
+
+function applyBroadcastUI() {
+  const btn = $('btn-broadcast');
+  const compose = $('compose');
+  btn.classList.toggle('active', STATE.broadcastMode);
+  compose.classList.toggle('broadcast', STATE.broadcastMode);
+}
+
+// ============================================================================
+// BOOT
+// ============================================================================
+function boot() {
+  wire();
+  setConnState('connecting');
+  renderAll();
+  // Restore thread state
+  if (STATE.currentThread) {
+    const pane = $('pane-chat');
+    if (window.innerWidth <= 700) pane.classList.add('show-thread');
+  }
+  connect();
+
+  // Periodic re-render to update "time ago" labels
+  setInterval(() => {
+    if (STATE.currentTab === 'chat' || STATE.currentTab === 'tasks') {
+      renderSidebar();
+    }
+  }, 30000);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+</script>
+</body>
+</html>
