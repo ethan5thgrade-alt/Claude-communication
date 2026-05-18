@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = 18765
-INST_PORT = 18766
+UI_PORT = 18865
+INST_PORT = 18866
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
@@ -560,3 +560,121 @@ async def test_cyclic_task_rejected(started_broker):
             assert got_error
             # T001 deps unchanged
             assert started_broker.state["tasks"][0]["deps"] == []
+
+
+# -------------------- flow execution engine (Batch 2) --------------------
+
+
+async def _create_flow(ui_ws, name, trigger, action_desc):
+    """Create a flow via the UI websocket and wait for confirmation."""
+    await ui_ws.send_json({
+        "action": "create_flow",
+        "name": name,
+        "trigger": trigger,
+        "action_desc": action_desc,
+    })
+    # drain state_update so the flow is registered before we continue
+    end = asyncio.get_event_loop().time() + 2
+    while asyncio.get_event_loop().time() < end:
+        msg = await asyncio.wait_for(ui_ws.receive(), timeout=2)
+        if msg.type != aiohttp.WSMsgType.TEXT:
+            continue
+        p = json.loads(msg.data)
+        if p.get("type") == "state_update" and "flows" in p.get("delta", {}):
+            flows = p["delta"]["flows"]
+            for f in flows:
+                if f["name"] == name:
+                    return f
+    raise AssertionError("flow not confirmed via state_update")
+
+
+@pytest.mark.asyncio
+async def test_flow_regex_trigger_fires_send(started_broker):
+    """Posting a message matching the trigger fires a `send` action to the target."""
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            await ui_ws.receive_json(timeout=2)  # init
+            await _create_flow(ui_ws, "deploy-fanout",
+                                r"\bdeploy\b",
+                                "send cc2 deploy detected from {from}")
+        async with websockets.connect(WS_URL) as ws1, websockets.connect(WS_URL) as ws2:
+            await _register(ws1, iid="cc1")
+            await _register(ws2, iid="cc2")
+            await asyncio.sleep(0.05)
+            # cc1 says something containing "deploy" addressed to "you"
+            await ws1.send(json.dumps({
+                "type": "message", "to": "you", "text": "ok I will deploy now",
+            }))
+            # cc2 should receive a flow-generated message
+            got = await _recv_until(
+                ws2,
+                lambda p: p.get("type") == "message" and p.get("from") == "flow",
+                timeout=2.0,
+            )
+            assert "deploy detected" in got["text"]
+            assert "cc1" in got["text"]
+
+
+@pytest.mark.asyncio
+async def test_flow_template_renders_groups(started_broker):
+    """Regex capture groups should render via {match.N} in the template."""
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            await ui_ws.receive_json(timeout=2)
+            await _create_flow(ui_ws, "task-capture",
+                                r"task (\w+) ready",
+                                "send cc2 task {match.1} is queued for {to}")
+        async with websockets.connect(WS_URL) as ws1, websockets.connect(WS_URL) as ws2:
+            await _register(ws1, iid="cc1")
+            await _register(ws2, iid="cc2")
+            await asyncio.sleep(0.05)
+            await ws1.send(json.dumps({
+                "type": "message", "to": "you", "text": "task ALPHA42 ready for review",
+            }))
+            got = await _recv_until(
+                ws2,
+                lambda p: p.get("type") == "message" and p.get("from") == "flow",
+                timeout=2.0,
+            )
+            assert "ALPHA42" in got["text"]
+            assert "queued for you" in got["text"]
+
+
+@pytest.mark.asyncio
+async def test_flow_rate_limit(started_broker):
+    """Same flow can fire 5x in 60s; the 6th must be throttled."""
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            await ui_ws.receive_json(timeout=2)
+            await _create_flow(ui_ws, "rate-limited",
+                                r"ping",
+                                "send cc2 pong-{match.0}")
+        async with websockets.connect(WS_URL) as ws1, websockets.connect(WS_URL) as ws2:
+            await _register(ws1, iid="cc1")
+            await _register(ws2, iid="cc2")
+            await asyncio.sleep(0.05)
+            # fire 6x rapidly
+            for i in range(6):
+                await ws1.send(json.dumps({
+                    "type": "message", "to": "you", "text": f"ping {i}",
+                }))
+            # collect flow-originated messages on cc2 for up to 1s
+            received = []
+            end = asyncio.get_event_loop().time() + 1.5
+            while asyncio.get_event_loop().time() < end:
+                remaining = end - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    break
+                try:
+                    raw = await asyncio.wait_for(ws2.recv(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    break
+                p = json.loads(raw)
+                if p.get("type") == "message" and p.get("from") == "flow":
+                    received.append(p)
+            # exactly 5 flow fires should reach cc2; 6th throttled
+            assert len(received) == 5, f"expected 5 fires, got {len(received)}"
+            # verify "flow_throttled" appears in audit
+            throttled = [a for a in started_broker.state["audit"]
+                         if a.get("action") == "flow_throttled"]
+            assert len(throttled) >= 1

@@ -8,13 +8,15 @@ import os
 import re
 import shutil
 import socket
+import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import aiohttp
 import websockets
-from aiohttp import web, WSMsgType
+from aiohttp import web, WSMsgType, ClientTimeout
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("broker")
@@ -106,6 +108,9 @@ class Broker:
 
         # per-instance backlog queues
         self.backlog: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+
+        # flow fire tracking: flow_id -> deque of monotonic timestamps
+        self._flow_fires: dict[str, deque] = defaultdict(lambda: deque(maxlen=32))
 
         self._write_task: Optional[asyncio.Task] = None
         self._backup_task: Optional[asyncio.Task] = None
@@ -403,6 +408,189 @@ class Broker:
 
         return any(dfs(n) for n in graph)
 
+    # ------------------- flow execution engine -------------------
+    FLOW_RATE_LIMIT = 5  # max fires per window
+    FLOW_RATE_WINDOW = 60.0  # seconds
+
+    def _apply_rate_limit(self, flow_id: str) -> bool:
+        """Sliding-window rate limit. Returns True if fire is allowed and records it.
+
+        Returns False if rate exceeded (does NOT record)."""
+        now = time.monotonic()
+        fires = self._flow_fires[flow_id]
+        cutoff = now - self.FLOW_RATE_WINDOW
+        while fires and fires[0] < cutoff:
+            fires.popleft()
+        if len(fires) >= self.FLOW_RATE_LIMIT:
+            return False
+        fires.append(now)
+        return True
+
+    def _render_template(self, template: str, entry: dict, match: Optional[re.Match]) -> str:
+        """Render template using {from}, {to}, {text}, {match.0}, {match.1}, ..."""
+        # build a context dict; use a defaultdict-like that returns "" for missing keys
+        ctx: dict[str, Any] = {
+            "from": entry.get("from", ""),
+            "to": entry.get("to", ""),
+            "text": entry.get("text", ""),
+        }
+        # match groups: {match.0}=whole match, {match.1}=group(1), ...
+        match_groups: dict[str, str] = {}
+        if match is not None:
+            match_groups["0"] = match.group(0)
+            for i, g in enumerate(match.groups(), start=1):
+                match_groups[str(i)] = g if g is not None else ""
+
+        # Use a custom Formatter-friendly approach: support {match.N} and {field}
+        class _Ctx:
+            def __getitem__(_self, key):
+                if key.startswith("match."):
+                    return match_groups.get(key[6:], "")
+                return ctx.get(key, "")
+
+        try:
+            # str.format_map supports __getitem__ but not nested attrs; use Formatter
+            import string
+            formatter = string.Formatter()
+            out_parts = []
+            for literal_text, field_name, format_spec, conversion in formatter.parse(template):
+                out_parts.append(literal_text)
+                if field_name is None:
+                    continue
+                if field_name.startswith("match."):
+                    val = match_groups.get(field_name[6:], "")
+                else:
+                    val = ctx.get(field_name, "")
+                out_parts.append(str(val))
+            return "".join(out_parts)
+        except Exception:
+            return template
+
+    def _parse_action(self, action: str) -> Optional[tuple[str, dict]]:
+        """Parse an action DSL string.
+
+        Returns (kind, params) or None if unparseable.
+            send <to> <template...>         -> ("send", {"to": to, "template": ...})
+            broadcast <template...>         -> ("broadcast", {"template": ...})
+            webhook <url> <template...>     -> ("webhook", {"url": url, "template": ...})
+        """
+        if not action:
+            return None
+        s = action.strip()
+        if not s:
+            return None
+        # split into head + rest, keeping rest intact
+        parts = s.split(None, 1)
+        head = parts[0].lower()
+        rest = parts[1] if len(parts) > 1 else ""
+
+        if head == "send":
+            sub = rest.split(None, 1)
+            if len(sub) < 2:
+                return None
+            to, template = sub[0], sub[1]
+            return ("send", {"to": to, "template": template})
+        if head == "broadcast":
+            if not rest:
+                return None
+            return ("broadcast", {"template": rest})
+        if head == "webhook":
+            sub = rest.split(None, 1)
+            if len(sub) < 2:
+                return None
+            url, template = sub[0], sub[1]
+            return ("webhook", {"url": url, "template": template})
+        return None
+
+    async def _post_webhook(self, url: str, body: dict) -> bool:
+        """POST JSON to url with 3s timeout, retry once. Audit each attempt."""
+        timeout = ClientTimeout(total=3)
+        last_err = None
+        for attempt in (1, 2):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, json=body) as resp:
+                        ok = 200 <= resp.status < 300
+                        self.audit("flow", "webhook_attempt",
+                                   f"{url} status={resp.status} attempt={attempt}")
+                        if ok:
+                            return True
+                        last_err = f"status={resp.status}"
+            except Exception as e:
+                last_err = str(e)
+                self.audit("flow", "webhook_attempt",
+                           f"{url} error={e} attempt={attempt}")
+            if attempt == 1:
+                await asyncio.sleep(0)  # yield before retry
+        self.audit("flow", "webhook_failed", f"{url} {last_err}")
+        return False
+
+    async def _evaluate_flows(self, entry: dict):
+        """Evaluate every enabled flow against the persisted message entry."""
+        text = entry.get("text") or ""
+        # Iterate over a snapshot to be safe with concurrent edits
+        for flow in list(self.state.get("flows", [])):
+            if not flow.get("enabled", True):
+                continue
+            trigger = flow.get("trigger") or ""
+            if not trigger:
+                # Empty trigger = match nothing (per spec)
+                continue
+            try:
+                pattern = re.compile(trigger)
+            except re.error:
+                continue
+            m = pattern.search(text)
+            if not m:
+                continue
+            fid = flow.get("id", "?")
+            # rate limit
+            if not self._apply_rate_limit(fid):
+                self.audit("flow", "flow_throttled",
+                           f"{fid} matched {trigger!r}")
+                continue
+            self.audit("flow", "flow_fire", f"{fid} matched {trigger!r}")
+            parsed = self._parse_action(flow.get("action") or "")
+            if not parsed:
+                continue
+            kind, params = parsed
+            template = params.get("template", "")
+            rendered = self._render_template(template, entry, m)
+            if kind == "send":
+                to = params["to"]
+                payload = {
+                    "type": "message",
+                    "id": f"flow-{fid}-{len(self.state['messages']) + 1}",
+                    "from": "flow",
+                    "to": to,
+                    "text": rendered,
+                    "ts": now_iso(),
+                    "flow": fid,
+                }
+                await self.send_to_instance(to, payload)
+                await self.broadcast_ui({"type": "flow_fired", "id": fid,
+                                          "to": to, "text": rendered})
+            elif kind == "broadcast":
+                payload = {
+                    "type": "message",
+                    "id": f"flow-{fid}-{len(self.state['messages']) + 1}",
+                    "from": "flow",
+                    "to": "all",
+                    "text": rendered,
+                    "ts": now_iso(),
+                    "flow": fid,
+                }
+                await self.broadcast_instances(payload)
+                await self.broadcast_ui({"type": "flow_fired", "id": fid,
+                                          "to": "all", "text": rendered})
+            elif kind == "webhook":
+                url = params["url"]
+                body = {"flow": fid, "text": rendered}
+                # fire-and-forget so we don't block message handling
+                asyncio.create_task(self._post_webhook(url, body))
+                await self.broadcast_ui({"type": "flow_fired", "id": fid,
+                                          "url": url, "text": rendered})
+
     # ------------------- instance WebSocket handler -------------------
     async def handle_instance(self, ws):
         instance_id: Optional[str] = None
@@ -509,6 +697,7 @@ class Broker:
                     else:
                         await self.send_to_instance(to, {"type": "message", **entry})
                         await self.broadcast_ui({"type": "message", "message": entry})
+                    await self._evaluate_flows(entry)
 
                 elif mtype == "status":
                     if not instance_id:
@@ -768,6 +957,7 @@ class Broker:
             else:
                 await self.send_to_instance(to, {"type": "message", **entry})
             await self.broadcast_ui({"type": "message", "message": entry})
+            await self._evaluate_flows(entry)
 
         elif action == "approve":
             ap_id = data.get("id")
@@ -1030,6 +1220,7 @@ class Broker:
         else:
             await self.send_to_instance(to, {"type": "message", **entry})
         await self.broadcast_ui({"type": "message", "message": entry})
+        await self._evaluate_flows(entry)
         return web.json_response({"ok": True, "message": entry})
 
     async def http_clear(self, request):

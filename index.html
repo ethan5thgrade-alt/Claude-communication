@@ -857,8 +857,9 @@
         <div class="section-head">+ NEW FLOW</div>
         <form id="flow-form" onsubmit="return false">
           <input type="text" id="fl-name" placeholder="Flow name…" />
-          <textarea id="fl-trigger" placeholder="Trigger (e.g. when cc1 finishes T1)" rows="2"></textarea>
-          <textarea id="fl-action" placeholder="Action (e.g. notify cc2 to start T2)" rows="2"></textarea>
+          <textarea id="fl-trigger" pattern="r'\bdeploy\b'" placeholder="Trigger — regex pattern, e.g. r'\bdeploy\b'" rows="2"></textarea>
+          <div class="flow-hint" style="font-size:10px;color:var(--dim);margin:-4px 0 6px 2px;">trigger is a Python regex; action is <code>send &lt;to&gt; &lt;template&gt;</code>, <code>broadcast &lt;template&gt;</code>, or <code>webhook &lt;url&gt; &lt;template&gt;</code>. Template vars: <code>{from} {to} {text} {match.1}</code></div>
+          <textarea id="fl-action" placeholder="Action (e.g. send cc2 task {match.1} is ready)" rows="2"></textarea>
           <div class="row">
             <div class="swatches" id="fl-swatches"></div>
           </div>
