@@ -36,6 +36,59 @@ MAX_DATED_BACKUPS = 7
 MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 DEFAULT_PLUGINS_DIR = Path.home() / ".claude" / "plugins" / "cache"
 
+# Per-instance offline backlog cap (bytes). Evicts oldest entries when exceeded.
+BACKLOG_BYTE_BUDGET = 256 * 1024  # 256 KB
+
+
+class BoundedBacklog:
+    """A FIFO buffer of payloads with a total-byte budget.
+
+    Behaves like a deque for the broker's purposes (`append`, `__iter__`,
+    `__len__`, `clear`), but evicts oldest entries from the front until the
+    running total fits under `byte_budget`. Each entry's size is approximated
+    via `len(json.dumps(payload, default=str))`.
+    """
+
+    __slots__ = ("byte_budget", "_entries", "total_bytes")
+
+    def __init__(self, byte_budget: int = BACKLOG_BYTE_BUDGET):
+        self.byte_budget = byte_budget
+        # deque of (size_bytes, payload)
+        self._entries: deque[tuple[int, Any]] = deque()
+        self.total_bytes = 0
+
+    @staticmethod
+    def _size_of(payload: Any) -> int:
+        try:
+            return len(json.dumps(payload, default=str))
+        except Exception:
+            # Fallback for un-JSON-able payloads
+            return len(repr(payload))
+
+    def append(self, payload: Any) -> None:
+        size = self._size_of(payload)
+        # Evict oldest until the new entry fits. If a single payload is larger
+        # than the entire budget we still store it (drop everything else first)
+        # so callers don't silently lose the only message.
+        while self._entries and self.total_bytes + size > self.byte_budget:
+            old_size, _ = self._entries.popleft()
+            self.total_bytes -= old_size
+        self._entries.append((size, payload))
+        self.total_bytes += size
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self.total_bytes = 0
+
+    def __iter__(self):
+        return (payload for _size, payload in self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __bool__(self) -> bool:
+        return bool(self._entries)
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -115,8 +168,8 @@ class Broker:
         # broker-side awaitable approvals: ap_id -> Future[bool]
         self._pending_approvals: dict[str, asyncio.Future] = {}
 
-        # per-instance backlog queues
-        self.backlog: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+        # per-instance backlog queues — byte-budgeted, not entry-count-capped.
+        self.backlog: dict[str, BoundedBacklog] = defaultdict(BoundedBacklog)
 
         # flow fire tracking: flow_id -> deque of monotonic timestamps
         self._flow_fires: dict[str, deque] = defaultdict(lambda: deque(maxlen=32))
