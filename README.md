@@ -8,8 +8,9 @@ audit trail, all on the LAN. No cloud, no accounts.
 ## Quickstart
 
 ```bash
-# 1. install deps
+# 1. install deps (zeroconf optional, enables mDNS LAN discovery)
 python3 -m pip install --user websockets aiohttp
+python3 -m pip install --user zeroconf   # optional
 
 # 2. run the broker
 python3 broker.py
@@ -96,6 +97,19 @@ curl -X POST http://localhost:8765/api/send \
 The UI WS expects `?token=...` in the query string. See
 [docs/security.md](docs/security.md) for the full model. Unset or empty
 `MESH_TOKEN` disables auth.
+
+## LAN auto-discovery (mDNS)
+
+If `zeroconf` is installed the broker advertises itself as
+`_agent-mesh._tcp.local.`. `python3 cli.py discover` lists every broker on
+the LAN; `connect.py` auto-falls-back to mDNS when `BROKER_URL` is unset and
+localhost fails. To force a specific broker:
+
+```bash
+BROKER_URL=ws://192.168.1.42:8766 python3 connect.py
+```
+
+Some networks block multicast — set `BROKER_URL` manually in that case.
 
 ## File map
 

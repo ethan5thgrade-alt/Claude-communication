@@ -31,6 +31,8 @@ INSTANCE_PORT = 8766
 CURRENT_SCHEMA_VERSION = 2
 DEFAULT_BACKUP_INTERVAL_SECONDS = 86400  # 24h
 MAX_DATED_BACKUPS = 7
+# mDNS / Zeroconf service type for agent-mesh broker advertisement.
+MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 
 
 def now_iso() -> str:
@@ -120,6 +122,10 @@ class Broker:
         self._stop = asyncio.Event()
         self._ws_server = None
         self._http_runner = None
+
+        # mDNS / Zeroconf advertisement (lazy; may be None if zeroconf not installed)
+        self._zc = None
+        self._zc_info = None
 
     # ------------------- state persistence -------------------
     def _pre_migration_backup(self, source_version: int) -> None:
@@ -1464,8 +1470,83 @@ class Broker:
 
         # schedule daily auto-backup
         self._backup_task = asyncio.create_task(self._backup_loop())
+        # Advertise on LAN via mDNS/zeroconf so phones / other Macs can auto-discover.
+        await self._mdns_register()
 
         log.info(f"Broker started: UI={self.ui_port} instances={self.instance_port}")
+
+    # ------------------- mDNS / Zeroconf -------------------
+    async def _mdns_register(self):
+        """Register the broker as an `_agent-mesh._tcp.local.` service.
+
+        Lazy/optional: if zeroconf isn't installed (or registration fails for
+        any reason), log a warning and continue — discovery is a nicety, not
+        a requirement. Uses AsyncZeroconf so it cooperates with our event loop.
+        """
+        try:
+            from zeroconf import ServiceInfo
+            from zeroconf.asyncio import AsyncZeroconf
+        except Exception as e:
+            log.warning(f"zeroconf not available; LAN discovery disabled ({e})")
+            return
+
+        try:
+            ip = local_ip()
+            try:
+                addr_bytes = socket.inet_aton(ip)
+            except OSError:
+                addr_bytes = socket.inet_aton("127.0.0.1")
+
+            try:
+                hostname = socket.gethostname().split(".")[0] or "broker"
+            except Exception:
+                hostname = "broker"
+
+            instance_name = f"Agent-Mesh-{hostname}"
+            # Service name must be unique within the service-type label.
+            service_name = f"{instance_name}.{MDNS_SERVICE_TYPE}"
+            # mDNS server label — must end with .local.
+            server = f"{hostname}-agent-mesh.local."
+
+            properties = {
+                b"version": b"1.0",
+                b"instances": str(len(self.instances)).encode("utf-8"),
+            }
+
+            info = ServiceInfo(
+                type_=MDNS_SERVICE_TYPE,
+                name=service_name,
+                addresses=[addr_bytes],
+                port=self.ui_port,
+                properties=properties,
+                server=server,
+            )
+            azc = AsyncZeroconf()
+            await azc.async_register_service(info)
+            self._zc = azc
+            self._zc_info = info
+            log.info(f"mDNS advertised: {service_name} -> {ip}:{self.ui_port}")
+        except Exception as e:
+            log.warning(f"mDNS registration failed; LAN discovery disabled ({e})")
+            self._zc = None
+            self._zc_info = None
+
+    async def _mdns_unregister(self):
+        azc = self._zc
+        info = self._zc_info
+        self._zc = None
+        self._zc_info = None
+        if azc is None:
+            return
+        try:
+            if info is not None:
+                await azc.async_unregister_service(info)
+        except Exception as e:
+            log.debug(f"mDNS unregister error: {e}")
+        try:
+            await azc.async_close()
+        except Exception as e:
+            log.debug(f"mDNS close error: {e}")
 
     async def stop(self):
         # cancel backup task first so it doesn't fire during teardown
@@ -1476,6 +1557,11 @@ class Broker:
             except (asyncio.CancelledError, Exception):
                 pass
             self._backup_task = None
+        # Unregister mDNS so we stop advertising before any sockets close.
+        try:
+            await self._mdns_unregister()
+        except Exception:
+            pass
         try:
             if self._ws_server:
                 self._ws_server.close()

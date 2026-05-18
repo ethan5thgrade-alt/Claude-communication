@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
+import time
 import urllib.error
 import urllib.request
 
 BASE = "http://localhost:8765"
+MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 MESH_TOKEN = os.environ.get("MESH_TOKEN") or None
 
 
@@ -65,7 +68,72 @@ Usage:
   python cli.py status
   python cli.py state
   python cli.py clear
+  python cli.py discover
 """
+
+
+def _discover(timeout: float = 3.0) -> int:
+    """Browse mDNS for `_agent-mesh._tcp.local.` brokers and print them."""
+    try:
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+    except Exception as e:
+        print(f"zeroconf not installed; install with: "
+              f"python3 -m pip install --user zeroconf  ({e})")
+        return 1
+
+    found: dict[str, tuple[str, int]] = {}
+
+    class _Listener(ServiceListener):
+        def add_service(self, zc, type_, name):  # noqa: N802 (zeroconf API)
+            try:
+                info = zc.get_service_info(type_, name, timeout=1500)
+            except Exception:
+                info = None
+            if not info:
+                return
+            host = None
+            try:
+                addrs = info.parsed_addresses() if hasattr(info, "parsed_addresses") else []
+                if addrs:
+                    host = addrs[0]
+            except Exception:
+                host = None
+            if not host:
+                try:
+                    raw = info.addresses[0] if info.addresses else b""
+                    host = socket.inet_ntoa(raw) if len(raw) == 4 else None
+                except Exception:
+                    host = None
+            if not host and getattr(info, "server", None):
+                host = str(info.server).rstrip(".")
+            port = int(info.port) if info.port else 0
+            label = name
+            if label.endswith("." + MDNS_SERVICE_TYPE):
+                label = label[: -(len(MDNS_SERVICE_TYPE) + 1)]
+            found[name] = (host or "?", port)
+            print(f"{label}  {host}:{port}")
+
+        def update_service(self, zc, type_, name):  # noqa: N802
+            pass
+
+        def remove_service(self, zc, type_, name):  # noqa: N802
+            pass
+
+    zc = Zeroconf()
+    try:
+        ServiceBrowser(zc, MDNS_SERVICE_TYPE, _Listener())
+        time.sleep(timeout)
+    finally:
+        try:
+            zc.close()
+        except Exception:
+            pass
+
+    if not found:
+        # Stay exit-0 per spec; print a hint to stderr so scripts can still
+        # rely on exit code, while interactive users see why.
+        print("(no brokers found)", file=sys.stderr)
+    return 0
 
 
 def main(argv):
@@ -86,6 +154,8 @@ def main(argv):
         _pp(_get("/api/state"))
     elif cmd == "clear":
         _pp(_post("/api/clear", {}))
+    elif cmd == "discover":
+        return _discover()
     else:
         print(USAGE)
         return 1

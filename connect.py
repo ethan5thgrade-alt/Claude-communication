@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import sys
 import threading
 import time
@@ -19,7 +20,13 @@ import websockets
 INSTANCE_ID = "cc1"
 NAME = "Claude 1"
 PROJECT = "OPTFINDER"
-BROKER_URL = "ws://localhost:8766"
+# BROKER_URL: prefer env var. Falls through to localhost; if localhost fails on
+# the first attempt and the env var was NOT set, we'll mDNS-browse for a LAN
+# broker (see _discover_broker_url).
+_BROKER_URL_ENV = os.environ.get("BROKER_URL")
+BROKER_URL = _BROKER_URL_ENV or "ws://localhost:8766"
+MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
+INSTANCE_PORT = 8766
 # Optional shared-token auth. None or "" => no auth header sent.
 MESH_TOKEN = os.environ.get("MESH_TOKEN") or None
 # ------------------------------------------
@@ -128,8 +135,76 @@ def _handle_approval_decision(payload: dict):
     slot["event"].set()
 
 
+def _discover_broker_url(timeout: float = 2.0) -> Optional[str]:
+    """Browse mDNS briefly for a broker. Returns ws://<host>:8766 or None.
+
+    Optional dependency — silently returns None if zeroconf isn't installed.
+    """
+    try:
+        from zeroconf import ServiceBrowser, ServiceListener, Zeroconf
+    except Exception:
+        return None
+
+    host_holder: dict[str, Optional[str]] = {"host": None}
+
+    class _Listener(ServiceListener):
+        def add_service(self, zc, type_, name):  # noqa: N802
+            if host_holder["host"]:
+                return
+            try:
+                info = zc.get_service_info(type_, name, timeout=1500)
+            except Exception:
+                info = None
+            if not info:
+                return
+            host = None
+            try:
+                addrs = info.parsed_addresses() if hasattr(info, "parsed_addresses") else []
+                if addrs:
+                    host = addrs[0]
+            except Exception:
+                host = None
+            if not host:
+                try:
+                    raw = info.addresses[0] if info.addresses else b""
+                    host = socket.inet_ntoa(raw) if len(raw) == 4 else None
+                except Exception:
+                    host = None
+            if host:
+                host_holder["host"] = host
+
+        def update_service(self, zc, type_, name):  # noqa: N802
+            pass
+
+        def remove_service(self, zc, type_, name):  # noqa: N802
+            pass
+
+    zc = None
+    try:
+        zc = Zeroconf()
+        ServiceBrowser(zc, MDNS_SERVICE_TYPE, _Listener())
+        end = time.time() + timeout
+        while time.time() < end and host_holder["host"] is None:
+            time.sleep(0.1)
+    except Exception:
+        pass
+    finally:
+        try:
+            if zc is not None:
+                zc.close()
+        except Exception:
+            pass
+
+    host = host_holder["host"]
+    if not host:
+        return None
+    return f"ws://{host}:{INSTANCE_PORT}"
+
+
 async def _client_loop():
+    global BROKER_URL
     delay = 1.0
+    first_attempt = True
     while True:
         try:
             async with websockets.connect(BROKER_URL, ping_interval=20, ping_timeout=20) as ws:
@@ -146,6 +221,7 @@ async def _client_loop():
                     reg_payload["token"] = MESH_TOKEN
                 await ws.send(json.dumps(reg_payload))
                 print(f"[CONNECTED] {INSTANCE_ID} -> {BROKER_URL}")
+                first_attempt = False
                 delay = 1.0
                 async for raw in ws:
                     try:
@@ -182,6 +258,19 @@ async def _client_loop():
                         print(_fmt_incoming(payload))
         except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
             print(f"[DISCONNECTED] {e}; retry in {delay:.1f}s")
+            # On the very first failure, if BROKER_URL was the default
+            # localhost (i.e. env var not set), try LAN discovery.
+            if first_attempt and _BROKER_URL_ENV is None and BROKER_URL == "ws://localhost:8766":
+                first_attempt = False
+                print("[DISCOVER] trying mDNS browse for ~2s…")
+                found = await asyncio.get_event_loop().run_in_executor(
+                    None, _discover_broker_url, 2.0
+                )
+                if found and found != BROKER_URL:
+                    print(f"[DISCOVER] found broker at {found}")
+                    BROKER_URL = found
+                else:
+                    print("[DISCOVER] none found; staying on localhost")
         except Exception as e:
             print(f"[ERROR] {e}; retry in {delay:.1f}s")
         finally:
