@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.voidlabs.agent-mesh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/python3.13</string>
+        <string>-u</string>
+        <string>/Users/ethanstrauss/agent-mesh/broker.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/ethanstrauss/agent-mesh</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/ethanstrauss/Library/Logs/agent-mesh/out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/ethanstrauss/Library/Logs/agent-mesh/err.log</string>
+</dict>
+</plist>
