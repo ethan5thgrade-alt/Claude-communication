@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 import sys
 from pathlib import Path
 
@@ -35,12 +36,26 @@ import broker as broker_mod  # noqa: E402
 # import (which spans the whole module's worth of tests) can share one loop.
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
-# batch-10 uses distinct ports from test_broker.py (18765/18766) so the two
-# test modules can coexist in a single pytest run without port collisions and
-# without test_broker's per-test broker stomping on the long-lived broker
-# that this module needs for the connect.py background thread.
-UI_PORT = 18775
-INST_PORT = 18776
+
+def _pick_free_port() -> int:
+    """Bind to port 0, read back the OS-assigned port, close the socket.
+
+    Small TOCTOU window before our Broker can bind it, but vastly more robust
+    than hardcoded ports — multiple pytest runs (sibling worktrees / agents)
+    can coexist without colliding.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+# Pick free ports once at module load. Distinct from test_broker.py's ports
+# (also dynamically chosen) so the two modules can't trample each other.
+UI_PORT = _pick_free_port()
+INST_PORT = _pick_free_port()
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
