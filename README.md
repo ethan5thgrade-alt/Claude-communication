@@ -50,6 +50,7 @@ broker_memory("SSE_FORMAT", "{pct, ticker}", mem_type="contract")
 broker_task_create("Write CSV parser", assignee="cc2", priority="high")
 broker_task_done("T003", result="merged in PR #41")
 broker_vote_and_wait("Ship M5?", ["yes", "no"])
+broker_log("retry after 503", level="warn")        # → audit row, no chat
 ```
 
 ## Auto-start on Mac

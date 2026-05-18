@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = 18765
-INST_PORT = 18766
+UI_PORT = int(os.environ.get("MESH_TEST_UI_PORT", "18765"))
+INST_PORT = int(os.environ.get("MESH_TEST_INST_PORT", "18766"))
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
@@ -177,6 +177,63 @@ async def test_broadcast(started_broker):
                         and payload.get("from") == "cc1")
         except asyncio.TimeoutError:
             pass
+
+
+@pytest.mark.asyncio
+async def test_broker_log_writes_audit_no_chat(started_broker):
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        # baseline counts
+        await asyncio.sleep(0.05)
+        msgs_before = len(started_broker.state["messages"])
+        audit_before = len(started_broker.state["audit"])
+
+        # fire a log event
+        await ws.send(json.dumps({"type": "log", "text": "hello audit", "level": "warn"}))
+        await asyncio.sleep(0.1)
+
+        # no chat message added
+        assert len(started_broker.state["messages"]) == msgs_before
+
+        # audit row appears, with level prefix
+        new_audits = started_broker.state["audit"][audit_before:]
+        log_rows = [a for a in new_audits if a["action"] == "log"]
+        assert len(log_rows) == 1
+        assert log_rows[0]["agent"] == "cc1"
+        assert log_rows[0]["detail"].startswith("warn:")
+        assert "hello audit" in log_rows[0]["detail"]
+
+        # instance does NOT receive a chat message back from its own log
+        try:
+            extra = await asyncio.wait_for(ws.recv(), timeout=0.3)
+            payload = json.loads(extra)
+            assert payload.get("type") != "message"
+        except asyncio.TimeoutError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_broker_log_broadcasts_log_event_to_ui(started_broker):
+    # connect UI ws first
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            init = await ui_ws.receive_json(timeout=2)
+            assert init["type"] == "init"
+            async with websockets.connect(WS_URL) as ws:
+                await _register(ws, iid="cc1")
+                await ws.send(json.dumps({"type": "log", "text": "ui audit watch", "level": "error"}))
+
+                async def wait_log():
+                    async for raw in ui_ws:
+                        if raw.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        p = json.loads(raw.data)
+                        if p.get("type") == "log_event" and p.get("text") == "ui audit watch":
+                            return p
+                got = await asyncio.wait_for(wait_log(), timeout=2)
+                assert got["id"] == "cc1"
+                assert got["level"] == "error"
+                assert got["audit"]["action"] == "log"
 
 
 @pytest.mark.asyncio
@@ -1009,8 +1066,8 @@ async def test_flow_rate_limit(started_broker):
 # ----------------------- mDNS / Zeroconf -----------------------
 
 # Use unique ports for these so they don't fight the started_broker fixture.
-ZC_UI_PORT = 18865
-ZC_INST_PORT = 18866
+ZC_UI_PORT = int(os.environ.get("MESH_TEST_ZC_UI_PORT", "18865"))
+ZC_INST_PORT = int(os.environ.get("MESH_TEST_ZC_INST_PORT", "18866"))
 
 
 @pytest.mark.asyncio

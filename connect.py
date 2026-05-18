@@ -370,6 +370,21 @@ def broker_typing(value: bool = True):
     _schedule(_send_json({"type": "typing", "value": bool(value)}))
 
 
+def broker_log(text: str, level: str = "info"):
+    """Write a structured audit entry on the broker. Fire-and-forget.
+
+    Does NOT send a chat message to any other instance or to the UI chat —
+    it only appends an audit row (with level prefix) and emits a `log_event`
+    to the UI for live AUDIT-tab updates. `level` is one of
+    "info" | "warn" | "error" | "debug" (anything else is coerced to "info").
+    """
+    _schedule(_send_json({
+        "type": "log",
+        "text": str(text),
+        "level": str(level or "info").lower(),
+    }))
+
+
 def broker_task_create(title: str, assignee: str = "", priority: str = "normal",
                        deps: Optional[list] = None):
     """Create a task. If `assignee` is another instance id, they get task_assigned."""
