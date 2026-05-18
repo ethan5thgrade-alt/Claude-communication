@@ -399,6 +399,51 @@ async def test_backlog_delivers_on_reconnect(started_broker):
         assert got_backlog
 
 
+def test_backlog_byte_budget_evicts():
+    """Old entries should be evicted from BoundedBacklog once total bytes > budget."""
+    # 4 KB budget keeps the test cheap and deterministic.
+    budget = 4 * 1024
+    backlog = broker_mod.BoundedBacklog(byte_budget=budget)
+
+    # Each entry is ~1100 bytes after JSON-encoding (padding string + index).
+    # Pushing 10 of them blows the budget; only the most recent few should survive.
+    payload_size_hint = 1100
+    pad = "x" * payload_size_hint
+    for i in range(10):
+        backlog.append({"i": i, "pad": pad})
+
+    # Budget invariant must hold after every append.
+    assert backlog.total_bytes <= budget, (backlog.total_bytes, budget)
+
+    indices = [p["i"] for p in backlog]
+    # Newest entries must remain; the freshest one is non-negotiable.
+    assert indices[-1] == 9
+    # Strictly ascending — eviction is FIFO, never reorders.
+    assert indices == sorted(indices)
+    # Something must have been evicted given total payload (~11 KB) > 4 KB budget.
+    assert len(indices) < 10
+    # The very oldest (i=0) must be gone.
+    assert 0 not in indices
+
+    # Single huge payload bigger than the entire budget is still stored
+    # (drops the rest so the latest message isn't silently lost).
+    backlog.append({"i": "huge", "pad": "y" * (budget * 2)})
+    surviving = list(backlog)
+    assert len(surviving) == 1
+    assert surviving[0]["i"] == "huge"
+
+    # clear() resets bookkeeping.
+    backlog.clear()
+    assert len(backlog) == 0
+    assert backlog.total_bytes == 0
+    assert list(backlog) == []
+
+
+def test_backlog_byte_budget_constant_is_256k():
+    """Top-of-file constant should be 256 KB so it stays tweakable."""
+    assert broker_mod.BACKLOG_BYTE_BUDGET == 256 * 1024
+
+
 @pytest.mark.asyncio
 async def test_agent_task_create_assigns(started_broker):
     """cc1 creates a task assigned to cc2; cc2 should receive task_assigned."""
