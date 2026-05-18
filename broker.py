@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import time
@@ -1963,8 +1964,21 @@ async def amain():
     if token:
         log.info("Shared-token auth ENABLED (MESH_TOKEN set)")
     print_banner(local_ip(), broker.ui_port, broker.instance_port)
+    shutdown_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def _request_shutdown(signame: str):
+        log.info(f"Received {signame}, initiating graceful shutdown")
+        shutdown_event.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _request_shutdown, sig.name)
+        except NotImplementedError:
+            # add_signal_handler is POSIX-only; fall back to default handling.
+            pass
     try:
-        await asyncio.Event().wait()
+        await shutdown_event.wait()
     finally:
         await broker.stop()
 
