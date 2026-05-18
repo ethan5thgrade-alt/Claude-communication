@@ -1901,8 +1901,14 @@ function renderApprovals() {
 function renderApprovalCard(a, resolved) {
   const card = el('div', {cls: 'approval-card' + (resolved ? ' resolved' : '')});
   const head = el('div', {cls: 'ap-head'});
-  const ag = el('span', {cls: 'pill agent', text: agentName(a.agent || 'unknown')});
-  ag.style.color = agentColor(a.agent); ag.style.borderColor = agentColor(a.agent);
+  // requester id: broker stores it as `from` (legacy data may use `agent`)
+  const requester = a.from || a.agent || 'unknown';
+  const inst = STATE.instances.find(i => i.id === requester);
+  const requesterName = inst ? inst.name : agentName(requester);
+  const requesterProject = inst ? (inst.project || '') : '';
+  const labelText = requesterProject ? (requesterName + ' · ' + requesterProject) : requesterName;
+  const ag = el('span', {cls: 'pill agent', text: labelText});
+  ag.style.color = agentColor(requester); ag.style.borderColor = agentColor(requester);
   head.appendChild(ag);
   head.appendChild(el('span', {cls: 'pill risk-' + (a.risk || 'low'), text: 'RISK: ' + (a.risk || 'low').toUpperCase()}));
   if (resolved) {

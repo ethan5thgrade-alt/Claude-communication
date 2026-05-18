@@ -41,6 +41,9 @@ python3 -m pip install --user websockets aiohttp pytest pytest-asyncio
    broker_broadcast("API contract finalized.")         # → all instances
    broker_status("Writing SSE endpoint", workload=80)  # → sidebar update
    broker_approve_request("Delete /scan", risk="medium", detail="Old clients 404")
+   ok = broker_approve_and_wait("Drop production table", risk="high",
+                                detail="Will run within 60s if you approve", timeout=300)
+   # ok is True if approved, False if rejected, None on timeout
    broker_memory("SSE_FORMAT", "{pct, ticker}", mem_type="contract")
    broker_task_create("Write CSV parser", assignee="cc2", priority="high")
    broker_task_claim("T003")

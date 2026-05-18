@@ -27,6 +27,12 @@ _ws_holder = {"ws": None, "connected": False}
 _loop_started = threading.Event()
 _stop_event: Optional[asyncio.Event] = None
 
+# approval correlation: ap_id -> {"event": threading.Event, "decision": bool|None}
+_pending_approvals: dict = {}
+# queue of waiters that haven't yet learned their ap_id (FIFO matching to approval_pending)
+_pending_approval_waiters: list = []
+_approval_lock = threading.Lock()
+
 
 def _start_loop():
     global _loop, _loop_thread, _stop_event
@@ -72,12 +78,38 @@ def _fmt_incoming(payload: dict) -> str:
     if t == "backlog":
         msgs = payload.get("messages", [])
         return f"[BACKLOG] {len(msgs)} queued messages"
+    if t == "approval_pending":
+        return f"[APPROVAL PENDING] id={payload.get('id', '')} action={payload.get('action', '')}"
     if t == "approval_decision":
         verdict = "approved" if payload.get("decision") else "rejected"
         return f"[APPROVAL DECISION] {payload.get('id', '')} {verdict}: {payload.get('action', '')}"
     if t == "control":
         return f"[CONTROL] paused={payload.get('paused')}"
     return f"[{t or 'EVENT'}] {json.dumps(payload, default=str)}"
+
+
+def _handle_approval_pending(payload: dict):
+    ap_id = payload.get("id")
+    if not ap_id:
+        return
+    with _approval_lock:
+        # claim the oldest queued waiter and bind it to this ap_id
+        if _pending_approval_waiters:
+            slot = _pending_approval_waiters.pop(0)
+            slot["ap_id"] = ap_id
+            _pending_approvals[ap_id] = slot
+
+
+def _handle_approval_decision(payload: dict):
+    ap_id = payload.get("id")
+    if not ap_id:
+        return
+    with _approval_lock:
+        slot = _pending_approvals.pop(ap_id, None)
+    if slot is None:
+        return
+    slot["decision"] = bool(payload.get("decision"))
+    slot["event"].set()
 
 
 async def _client_loop():
@@ -101,10 +133,25 @@ async def _client_loop():
                         payload = json.loads(raw)
                     except Exception:
                         continue
-                    if payload.get("type") == "backlog":
+                    ptype = payload.get("type")
+                    if ptype == "approval_pending":
+                        _handle_approval_pending(payload)
+                        print(_fmt_incoming(payload))
+                        continue
+                    if ptype == "approval_decision":
+                        _handle_approval_decision(payload)
+                        print(_fmt_incoming(payload))
+                        continue
+                    if ptype == "backlog":
                         msgs = payload.get("messages", [])
                         print(f"[BACKLOG] {len(msgs)} queued messages")
                         for m in msgs:
+                            # also dispatch approval events that landed in backlog
+                            mt = m.get("type")
+                            if mt == "approval_pending":
+                                _handle_approval_pending(m)
+                            elif mt == "approval_decision":
+                                _handle_approval_decision(m)
                             print("  " + _fmt_incoming(m))
                     else:
                         print(_fmt_incoming(payload))
@@ -157,6 +204,39 @@ def broker_approve_request(action: str, risk: str = "low", detail: str = ""):
         "risk": risk,
         "detail": detail,
     }))
+
+
+def broker_approve_and_wait(action: str, risk: str = "low", detail: str = "",
+                            timeout: float = 300.0) -> Optional[bool]:
+    """Send an approval_request and block (sync) until the broker returns a decision.
+
+    Returns True if approved, False if rejected, None on timeout.
+    """
+    slot = {"event": threading.Event(), "decision": None, "ap_id": None}
+    with _approval_lock:
+        _pending_approval_waiters.append(slot)
+    fut = _schedule(_send_json({
+        "type": "approval_request",
+        "action": action,
+        "risk": risk,
+        "detail": detail,
+    }))
+    # ensure the send actually went out before we wait on a decision
+    if fut is not None:
+        try:
+            fut.result(timeout=5)
+        except Exception:
+            pass
+    ok = slot["event"].wait(timeout=timeout)
+    if not ok:
+        # cleanup: drop this slot from the wait queues
+        with _approval_lock:
+            if slot in _pending_approval_waiters:
+                _pending_approval_waiters.remove(slot)
+            if slot.get("ap_id") and _pending_approvals.get(slot["ap_id"]) is slot:
+                _pending_approvals.pop(slot["ap_id"], None)
+        return None
+    return slot["decision"]
 
 
 def broker_memory(key: str, value, mem_type: str = "contract"):
