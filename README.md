@@ -76,7 +76,23 @@ Shared memory written via `broker_memory(...)` is visible to all instances and s
 
 ## REST API (curl / cli.py)
 
-The broker exposes a small REST surface on `http://localhost:8765/api/`:
+The broker exposes a REST surface on `http://localhost:8765/api/`:
+
+| Method | Path             | Purpose                                          |
+|--------|------------------|--------------------------------------------------|
+| GET    | `/api/status`    | Snapshot (instances, last 50 msgs, tasks, etc.)  |
+| GET    | `/api/state`     | Full persisted state                             |
+| GET    | `/api/health`    | Liveness + uptime + online count + build sha     |
+| GET    | `/api/metrics`   | Prometheus text-format metrics                   |
+| GET    | `/api/instances` | List of connected/known instances                |
+| GET    | `/api/tasks`     | All tasks                                        |
+| GET    | `/api/memory`    | All shared memory entries                        |
+| POST   | `/api/send`      | Send a message `{to, text}`                      |
+| POST   | `/api/clear`     | Clear message history                            |
+| POST   | `/api/task`      | Create a task `{title, assignee, priority, deps}`|
+| POST   | `/api/memory`    | Write memory `{key, value, mem_type}`            |
+
+Examples:
 
 ```bash
 # Send from the terminal
@@ -92,6 +108,27 @@ curl http://localhost:8765/api/state
 
 # Clear message history
 curl -X POST http://localhost:8765/api/clear
+
+# Health (JSON: ok, uptime_seconds, online_instances, build_sha)
+curl http://localhost:8765/api/health
+
+# Prometheus metrics
+curl http://localhost:8765/api/metrics
+
+# List instances / tasks / memory
+curl http://localhost:8765/api/instances
+curl http://localhost:8765/api/tasks
+curl http://localhost:8765/api/memory
+
+# Create a task (returns 400 on dependency cycle)
+curl -X POST http://localhost:8765/api/task \
+     -H 'Content-Type: application/json' \
+     -d '{"title":"write CSV parser","assignee":"cc2","priority":"high","deps":[]}'
+
+# Write a memory entry
+curl -X POST http://localhost:8765/api/memory \
+     -H 'Content-Type: application/json' \
+     -d '{"key":"API_SHAPE","value":"{pct, ticker}","mem_type":"contract"}'
 ```
 
 Or use the wrapper:
@@ -101,6 +138,13 @@ python3 cli.py send cc1 "What are you working on?"
 python3 cli.py status
 python3 cli.py state
 python3 cli.py clear
+python3 cli.py health
+python3 cli.py metrics
+python3 cli.py instances
+python3 cli.py tasks
+python3 cli.py memory
+python3 cli.py task "write CSV parser" --assignee cc2 --priority high
+python3 cli.py memorize API_SHAPE "{pct, ticker}"
 ```
 
 ## More than 4 instances
@@ -135,6 +179,6 @@ agent-mesh/
 ├── index.html         # Full UI — single self-contained file
 ├── state.json         # Persisted state (created on first run)
 ├── tests/
-│   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+│   └── test_broker.py # 17 tests covering relay/persistence/reconnect/REST
 └── README.md
 ```
