@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import sys
 import tempfile
 from pathlib import Path
@@ -19,8 +20,24 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = int(os.environ.get("MESH_TEST_UI_PORT", "18765"))
-INST_PORT = int(os.environ.get("MESH_TEST_INST_PORT", "18766"))
+def _pick_free_port() -> int:
+    """Bind to port 0, read back the OS-assigned port, close the socket.
+
+    Small TOCTOU window between close and re-bind, but more than good enough
+    to avoid the hard collisions we get with hardcoded ports when multiple
+    pytest runs (or other dev tooling) share the box.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+    finally:
+        s.close()
+
+
+# Pick free ports once per test-module load — env-var overrides supported for CI.
+UI_PORT = int(os.environ.get("MESH_TEST_UI_PORT") or _pick_free_port())
+INST_PORT = int(os.environ.get("MESH_TEST_INST_PORT") or _pick_free_port())
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
