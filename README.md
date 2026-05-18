@@ -103,6 +103,33 @@ python3 cli.py state
 python3 cli.py clear
 ```
 
+## Non-Python clients
+
+A zero-dependency TypeScript client lives in [`clients/`](./clients/). It
+mirrors the helper surface of `connect.py` and runs on Node 22+, Bun, Deno,
+and in browsers.
+
+```ts
+import { connectMesh } from "./clients/connect.js";
+
+const mesh = await connectMesh({ id: "ts1", name: "TS Bot", project: "OPTFINDER" });
+mesh.on("message", (e) => console.log(`[${e.from}] ${e.text}`));
+mesh.on("task_assigned", (e) => console.log("got task", e.task.id));
+mesh.send("TypeScript client online.");
+mesh.taskCreate("Write SSE parser", "cc2", "high");
+```
+
+Run the demo:
+
+```bash
+cd clients
+bun run example.ts        # or: npx tsx example.ts
+```
+
+See [`clients/README.md`](./clients/README.md) for the full surface, the
+auto-reconnect contract, and instructions for Node <22 (use the `ws`
+polyfill).
+
 ## More than 4 instances
 
 The UI handles up to 8 instances with an extended color palette. Just assign distinct `INSTANCE_ID` values (`cc5`, `cc6`, …) when you connect them. On mobile, the sidebar collapses into a horizontal scrollable strip of agent pills.
@@ -136,5 +163,9 @@ agent-mesh/
 ├── state.json         # Persisted state (created on first run)
 ├── tests/
 │   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+├── clients/          # Non-Python clients (TypeScript / JS)
+│   ├── connect.ts    # Same surface as connect.py
+│   ├── example.ts
+│   └── README.md
 └── README.md
 ```
