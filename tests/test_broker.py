@@ -411,6 +411,126 @@ async def test_approval_timeout(started_broker):
 
 
 @pytest.mark.asyncio
+async def test_migration_v1_to_v2(state_file):
+    """A v1-shaped state.json (no schema_version, no instances_meta, tasks without
+    created_by) should be migrated in-place to schema_version=2 with created_by
+    populated on existing tasks."""
+    v1_state = {
+        "messages": [],
+        "tasks": [
+            {"id": "T001", "title": "old task", "assignee": "cc1",
+             "priority": "normal", "deps": [], "status": "Backlog",
+             "ts": "2025-01-01T00:00:00+00:00"},
+        ],
+        "memory": [],
+        "flows": [],
+        "approvals": [],
+        "votes": [],
+        "audit": [],
+        # NOTE: no schema_version, no instances_meta, no counters
+    }
+    state_file.write_text(json.dumps(v1_state))
+    pre_backup = state_file.with_name(state_file.name + ".v1.bak")
+
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT,
+                          state_path=state_file)
+    b.load_state()
+
+    assert b.state["schema_version"] == 2
+    assert "instances_meta" in b.state
+    assert b.state["instances_meta"] == {}
+    assert "counters" in b.state
+    for prefix in ("M", "T", "F", "AP", "V", "A"):
+        assert prefix in b.state["counters"]
+    # tasks now have created_by
+    assert b.state["tasks"][0]["created_by"] == "unknown"
+    # pre-migration backup file exists
+    assert pre_backup.exists()
+    # audit entry recorded the migration
+    assert any(a.get("action") == "migration" for a in b.state["audit"])
+
+
+@pytest.mark.asyncio
+async def test_counter_integrity_after_load(state_file):
+    """If state has a T005 task but counters['T']=2, load_state must bump counters['T'] >= 5."""
+    state = {
+        "schema_version": 2,
+        "messages": [],
+        "tasks": [
+            {"id": "T005", "title": "high-id task", "assignee": "",
+             "priority": "normal", "deps": [], "status": "Backlog",
+             "created_by": "you", "ts": "2025-01-01T00:00:00+00:00"},
+        ],
+        "memory": [],
+        "flows": [],
+        "approvals": [],
+        "votes": [],
+        "audit": [],
+        "instances_meta": {},
+        "counters": {"M": 0, "T": 2, "F": 0, "AP": 0, "V": 0, "A": 0},
+    }
+    state_file.write_text(json.dumps(state))
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT,
+                          state_path=state_file)
+    b.load_state()
+    assert b.state["counters"]["T"] >= 5
+
+
+@pytest.mark.asyncio
+async def test_daily_backup_creates_file_and_prunes(state_file, tmp_path):
+    """Broker started with short backup interval should write a dated backup;
+    then prune should keep only the 7 newest dated backups."""
+    # seed a state file so backup has something to copy
+    state_file.write_text(json.dumps(broker_mod.empty_state()))
+
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT,
+                          state_path=state_file,
+                          backup_interval_seconds=0.05)
+    await b.start()
+    try:
+        await asyncio.sleep(0.2)
+        # at least one dated backup file should now exist
+        prefix = state_file.name + "."
+        dated = [
+            p for p in state_file.parent.iterdir()
+            if p.name.startswith(prefix) and p.name.endswith(".bak")
+            and len(p.name) - len(prefix) - 4 == 10  # YYYY-MM-DD = 10 chars
+        ]
+        assert len(dated) >= 1, f"expected dated backup, found: {[p.name for p in state_file.parent.iterdir()]}"
+    finally:
+        await b.stop()
+        await asyncio.sleep(0.05)
+
+    # now create 9 fake dated backup files in the same dir
+    fake_dates = [
+        "2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04",
+        "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09",
+    ]
+    # remove any existing dated backups first to make the count deterministic
+    prefix = state_file.name + "."
+    for p in list(state_file.parent.iterdir()):
+        if p.name.startswith(prefix) and p.name.endswith(".bak"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    for d in fake_dates:
+        (state_file.parent / f"{state_file.name}.{d}.bak").write_text("{}")
+
+    # prune
+    b._prune_dated_backups()
+
+    remaining = [
+        p for p in state_file.parent.iterdir()
+        if p.name.startswith(prefix) and p.name.endswith(".bak")
+    ]
+    assert len(remaining) == 7
+    # The two oldest should have been deleted
+    remaining_names = sorted(p.name for p in remaining)
+    assert all(date in name for date, name in zip(fake_dates[2:], remaining_names))
+
+
+@pytest.mark.asyncio
 async def test_cyclic_task_rejected(started_broker):
     async with aiohttp.ClientSession() as session:
         async with session.ws_connect(UI_WS_URL) as ui_ws:
