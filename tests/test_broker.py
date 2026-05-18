@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = 18765
-INST_PORT = 18766
+UI_PORT = 28765
+INST_PORT = 28766
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
@@ -32,8 +32,11 @@ def state_file(tmp_path):
 
 
 @pytest_asyncio.fixture
-async def started_broker(state_file):
-    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT, state_path=state_file)
+async def started_broker(state_file, tmp_path):
+    plugins_dir = tmp_path / "plugins_cache"
+    plugins_dir.mkdir()
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT,
+                          state_path=state_file, plugins_dir=plugins_dir)
     await b.start()
     # tiny pause for server sockets to be ready
     await asyncio.sleep(0.05)
@@ -42,6 +45,35 @@ async def started_broker(state_file):
     finally:
         await b.stop()
         await asyncio.sleep(0.05)
+
+
+def _make_fake_plugin(plugins_dir: Path, marketplace: str, plugin: str, version: str,
+                     skills=None, agents=None, commands=None, manifest_extra=None):
+    """Create a fake plugin tree under plugins_dir for tests."""
+    root = plugins_dir / marketplace / plugin / version
+    (root / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "name": plugin,
+        "version": version,
+        "description": f"Test plugin {plugin}",
+    }
+    if manifest_extra:
+        manifest.update(manifest_extra)
+    with open(root / ".claude-plugin" / "plugin.json", "w") as f:
+        json.dump(manifest, f)
+    for s in skills or []:
+        sd = root / "skills" / s
+        sd.mkdir(parents=True, exist_ok=True)
+        (sd / "SKILL.md").write_text(f"# {s}\n\nA test skill body.\n")
+    if agents:
+        (root / "agents").mkdir(parents=True, exist_ok=True)
+        for a in agents:
+            (root / "agents" / f"{a}.md").write_text(f"# agent {a}\n")
+    if commands:
+        (root / "commands").mkdir(parents=True, exist_ok=True)
+        for c in commands:
+            (root / "commands" / f"{c}.md").write_text(f"# command {c}\n")
+    return root
 
 
 async def _register(ws, iid="cc1", name="Claude 1", project="P"):
@@ -357,3 +389,129 @@ async def test_cyclic_task_rejected(started_broker):
             assert got_error
             # T001 deps unchanged
             assert started_broker.state["tasks"][0]["deps"] == []
+
+
+# ============================================================================
+# Plugin bridge tests
+# ============================================================================
+
+def test_plugin_catalog_scans(tmp_path):
+    """Broker scans plugins_dir at startup and exposes catalog."""
+    plugins_dir = tmp_path / "cache"
+    plugins_dir.mkdir()
+    _make_fake_plugin(plugins_dir, "mkt-x", "myplugin", "1.0.0",
+                      skills=["my-skill", "second-skill"],
+                      agents=["my-agent"],
+                      commands=["my-command"])
+    _make_fake_plugin(plugins_dir, "mkt-y", "other", "0.1.0",
+                      skills=["alpha"])
+    b = broker_mod.Broker(plugins_dir=plugins_dir, state_path=tmp_path / "s.json")
+    b._rescan_plugins()
+    assert "myplugin" in b._plugin_catalog
+    assert "other" in b._plugin_catalog
+    mp = b._plugin_catalog["myplugin"]
+    assert mp["marketplace"] == "mkt-x"
+    assert mp["version"] == "1.0.0"
+    assert "my-skill" in mp["skills"]
+    assert "second-skill" in mp["skills"]
+    assert "my-agent.md" in mp["agents"]
+    assert "my-command.md" in mp["commands"]
+    assert mp["manifest_data"].get("name") == "myplugin"
+
+
+@pytest.mark.asyncio
+async def test_plugin_invoke_returns_discovered(started_broker, tmp_path):
+    """Instance sends plugin_invoke; receives plugin_invoke_result with status=discovered."""
+    # populate the started_broker's plugins dir
+    plugins_dir = started_broker.plugins_dir
+    _make_fake_plugin(plugins_dir, "mkt-x", "myplugin", "1.0.0",
+                      skills=["my-skill"], agents=["my-agent"])
+    started_broker._rescan_plugins()
+    assert "myplugin" in started_broker._plugin_catalog
+
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await asyncio.sleep(0.05)
+        await ws.send(json.dumps({
+            "type": "plugin_invoke",
+            "plugin": "myplugin",
+            "tool": "my-skill",
+            "args": {"foo": "bar"},
+        }))
+        result = await _recv_until(ws, lambda p: p.get("type") == "plugin_invoke_result")
+        assert result["status"] == "discovered"
+        assert result["plugin"] == "myplugin"
+        assert result["tool"] == "my-skill"
+        assert result["kind"] == "skill"
+        assert result["path"].endswith("SKILL.md")
+        assert result["request_id"].startswith("PI")
+        assert result["manifest"].get("name") == "myplugin"
+        # audit row written
+        assert any(a.get("action") == "plugin_invoke" for a in started_broker.state["audit"])
+
+        # Also test that agents are resolvable
+        await ws.send(json.dumps({
+            "type": "plugin_invoke",
+            "plugin": "myplugin",
+            "tool": "my-agent",
+        }))
+        result2 = await _recv_until(ws, lambda p: p.get("type") == "plugin_invoke_result"
+                                    and p.get("tool") == "my-agent")
+        assert result2["status"] == "discovered"
+        assert result2["kind"] == "agent"
+        assert result2["path"].endswith("my-agent.md")
+
+
+@pytest.mark.asyncio
+async def test_plugin_invoke_not_found(started_broker):
+    """Invoke a non-existent plugin → status=not_found, audit row written."""
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await asyncio.sleep(0.05)
+        await ws.send(json.dumps({
+            "type": "plugin_invoke",
+            "plugin": "no-such-plugin",
+            "tool": "whatever",
+        }))
+        result = await _recv_until(ws, lambda p: p.get("type") == "plugin_invoke_result")
+        assert result["status"] == "not_found"
+        assert result["plugin"] == "no-such-plugin"
+        assert result["path"] == ""
+        assert result["request_id"].startswith("PI")
+        # audit row written
+        assert any(a.get("action") == "plugin_invoke"
+                   and "not_found" in a.get("detail", "")
+                   for a in started_broker.state["audit"])
+
+
+@pytest.mark.asyncio
+async def test_plugin_rest_endpoints(started_broker, tmp_path):
+    """GET /api/plugins lists plugins; GET /api/plugins/<id> returns full manifest."""
+    plugins_dir = started_broker.plugins_dir
+    _make_fake_plugin(plugins_dir, "mkt-z", "restplug", "0.2.0",
+                      skills=["sk-a", "sk-b"], commands=["do-thing"])
+    started_broker._rescan_plugins()
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(REST_URL + "/api/plugins") as r:
+            assert r.status == 200
+            data = await r.json()
+        ids = [p["id"] for p in data["plugins"]]
+        assert "restplug" in ids
+        row = next(p for p in data["plugins"] if p["id"] == "restplug")
+        assert row["marketplace"] == "mkt-z"
+        assert row["version"] == "0.2.0"
+        assert row["skills"] == 2
+        assert row["commands"] == 1
+        assert row["agents"] == 0
+
+        async with session.get(REST_URL + "/api/plugins/restplug") as r:
+            assert r.status == 200
+            detail = await r.json()
+        assert detail["id"] == "restplug"
+        assert detail["manifest"]["name"] == "restplug"
+        assert set(detail["skills"]) == {"sk-a", "sk-b"}
+        assert detail["path"].endswith("0.2.0")
+
+        async with session.get(REST_URL + "/api/plugins/nope") as r:
+            assert r.status == 404

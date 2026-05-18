@@ -25,6 +25,8 @@ INDEX_PATH = ROOT / "index.html"
 UI_PORT = 8765
 INSTANCE_PORT = 8766
 
+DEFAULT_PLUGINS_DIR = Path.home() / ".claude" / "plugins" / "cache"
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -40,16 +42,18 @@ def empty_state() -> dict:
         "votes": [],
         "audit": [],
         "instances_meta": {},  # persisted per-instance metadata: role, paused
-        "counters": {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0},
+        "counters": {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0, "PI": 0},
     }
 
 
 class Broker:
     def __init__(self, ui_port: int = UI_PORT, instance_port: int = INSTANCE_PORT,
-                 state_path: Path = STATE_PATH):
+                 state_path: Path = STATE_PATH,
+                 plugins_dir: Optional[Path] = None):
         self.ui_port = ui_port
         self.instance_port = instance_port
         self.state_path = state_path
+        self.plugins_dir = Path(plugins_dir) if plugins_dir is not None else DEFAULT_PLUGINS_DIR
 
         self.lock = asyncio.Lock()
         self.state: dict = empty_state()
@@ -60,6 +64,11 @@ class Broker:
 
         # per-instance backlog queues
         self.backlog: dict[str, deque] = defaultdict(lambda: deque(maxlen=100))
+
+        # plugin catalog (populated at start)
+        self._plugin_catalog: dict[str, dict] = {}
+        # plugin_invoke request counter
+        self.state.setdefault("counters", {}).setdefault("PI", 0)
 
         self._write_task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
@@ -192,6 +201,109 @@ class Broker:
                 "paused": meta.get("paused", False),
             })
         return out
+
+    # ------------------- plugin catalog -------------------
+    def _list_subdir_children(self, path: Path) -> list[str]:
+        """List direct child names (files + dirs) of a directory, sorted, hidden-skipped."""
+        if not path.exists() or not path.is_dir():
+            return []
+        try:
+            return sorted([p.name for p in path.iterdir() if not p.name.startswith(".")])
+        except Exception:
+            return []
+
+    def _load_plugin_manifest(self, plugin_root: Path) -> dict:
+        """Try common manifest locations; return parsed dict or {}."""
+        candidates = [
+            plugin_root / ".claude-plugin" / "plugin.json",
+            plugin_root / "plugin.json",
+        ]
+        for c in candidates:
+            if c.exists() and c.is_file():
+                try:
+                    with open(c, "r") as f:
+                        return json.load(f) or {}
+                except Exception as e:
+                    log.warning(f"Failed to parse manifest {c}: {e}")
+                    return {}
+        return {}
+
+    def _scan_plugins(self) -> dict[str, dict]:
+        """Walk plugins_dir and build catalog keyed by plugin name.
+
+        Layout assumed: <plugins_dir>/<marketplace>/<plugin>/<version>/...
+        If multiple versions exist for a plugin we take the last (lex-sorted) one.
+        """
+        catalog: dict[str, dict] = {}
+        root = self.plugins_dir
+        if not root.exists() or not root.is_dir():
+            return catalog
+        try:
+            marketplaces = sorted([p for p in root.iterdir() if p.is_dir()])
+        except Exception as e:
+            log.warning(f"Plugin scan: cannot list {root}: {e}")
+            return catalog
+        for mkt in marketplaces:
+            try:
+                plugins = sorted([p for p in mkt.iterdir() if p.is_dir()])
+            except Exception:
+                continue
+            for plug in plugins:
+                try:
+                    versions = sorted([p for p in plug.iterdir() if p.is_dir()])
+                except Exception:
+                    continue
+                if not versions:
+                    continue
+                # take the last (highest lex) version
+                ver_dir = versions[-1]
+                version = ver_dir.name
+                manifest = self._load_plugin_manifest(ver_dir)
+                skills = self._list_subdir_children(ver_dir / "skills")
+                agents = self._list_subdir_children(ver_dir / "agents")
+                commands = self._list_subdir_children(ver_dir / "commands")
+                pid = manifest.get("name") or plug.name
+                catalog[pid] = {
+                    "id": pid,
+                    "marketplace": mkt.name,
+                    "version": version,
+                    "path": str(ver_dir),
+                    "manifest_data": manifest,
+                    "skills": skills,
+                    "agents": agents,
+                    "commands": commands,
+                }
+        return catalog
+
+    def _rescan_plugins(self) -> int:
+        """Re-build the plugin catalog. Returns count."""
+        self._plugin_catalog = self._scan_plugins()
+        return len(self._plugin_catalog)
+
+    def _resolve_plugin_tool(self, plugin_id: str, tool: str) -> Optional[tuple[str, str]]:
+        """Find a skill/agent/command in a plugin.
+
+        Returns (kind, abspath) where kind is 'skill' | 'agent' | 'command',
+        or None if not found.
+        """
+        info = self._plugin_catalog.get(plugin_id)
+        if not info:
+            return None
+        ver_dir = Path(info["path"])
+        # Skill: subdir under skills/, file SKILL.md inside (or just the dir)
+        if tool in info.get("skills", []):
+            skill_path = ver_dir / "skills" / tool
+            inner = skill_path / "SKILL.md"
+            return ("skill", str(inner if inner.exists() else skill_path))
+        # Agent: file in agents/ (typically NAME.md). tool may be "name" or "name.md"
+        for a in info.get("agents", []):
+            if a == tool or a == f"{tool}.md" or a.rsplit(".", 1)[0] == tool:
+                return ("agent", str(ver_dir / "agents" / a))
+        # Command: file in commands/
+        for c in info.get("commands", []):
+            if c == tool or c == f"{tool}.md" or c.rsplit(".", 1)[0] == tool:
+                return ("command", str(ver_dir / "commands" / c))
+        return None
 
     # ------------------- task dep cycle check -------------------
     def has_cycle(self, tasks: list[dict]) -> bool:
@@ -471,6 +583,50 @@ class Broker:
                     self.audit(instance_id, "task_status", f"{tid}->{status}")
                     self.schedule_write()
                     await self.state_update({"tasks": self.state["tasks"]})
+
+                elif mtype == "plugin_invoke":
+                    if not instance_id:
+                        continue
+                    plugin_id = (msg.get("plugin") or "").strip()
+                    tool = (msg.get("tool") or "").strip()
+                    args = msg.get("args") or {}
+                    async with self.lock:
+                        req_id = self.next_id("PI")
+                    info = self._plugin_catalog.get(plugin_id)
+                    resolved = self._resolve_plugin_tool(plugin_id, tool) if info else None
+                    if info and resolved:
+                        kind, abspath = resolved
+                        status = "discovered"
+                        path = abspath
+                        manifest = info.get("manifest_data", {})
+                    elif info:
+                        # plugin exists but tool not found
+                        kind = ""
+                        status = "not_found"
+                        path = ""
+                        manifest = info.get("manifest_data", {})
+                    else:
+                        kind = ""
+                        status = "not_found"
+                        path = ""
+                        manifest = {}
+                    self.audit(instance_id, "plugin_invoke",
+                               f"{plugin_id}:{tool} -> {status} ({req_id})")
+                    self.schedule_write()
+                    result_payload = {
+                        "type": "plugin_invoke_result",
+                        "request_id": req_id,
+                        "plugin": plugin_id,
+                        "tool": tool,
+                        "kind": kind,
+                        "status": status,
+                        "path": path,
+                        "manifest": manifest,
+                        "args": args,
+                        "ts": now_iso(),
+                    }
+                    await self.send_to_instance(instance_id, result_payload)
+                    await self.broadcast_ui({"type": "plugin_invoke", "result": result_payload})
 
                 elif mtype == "task_done":
                     if not instance_id:
@@ -823,6 +979,35 @@ class Broker:
         await self.broadcast_ui({"type": "message", "message": entry})
         return web.json_response({"ok": True, "message": entry})
 
+    async def http_plugins(self, request):
+        out = []
+        for pid, info in sorted(self._plugin_catalog.items()):
+            out.append({
+                "id": pid,
+                "marketplace": info.get("marketplace", ""),
+                "version": info.get("version", ""),
+                "skills": len(info.get("skills", [])),
+                "agents": len(info.get("agents", [])),
+                "commands": len(info.get("commands", [])),
+            })
+        return web.json_response({"plugins": out})
+
+    async def http_plugin_detail(self, request):
+        pid = request.match_info.get("plugin_id", "")
+        info = self._plugin_catalog.get(pid)
+        if not info:
+            return web.json_response({"error": "plugin not found", "id": pid}, status=404)
+        return web.json_response({
+            "id": pid,
+            "marketplace": info.get("marketplace", ""),
+            "version": info.get("version", ""),
+            "path": info.get("path", ""),
+            "manifest": info.get("manifest_data", {}),
+            "skills": info.get("skills", []),
+            "agents": info.get("agents", []),
+            "commands": info.get("commands", []),
+        })
+
     async def http_clear(self, request):
         self.state["messages"] = []
         self.audit("you", "clear_messages", "REST")
@@ -833,6 +1018,13 @@ class Broker:
     # ------------------- lifecycle -------------------
     async def start(self):
         self.load_state()
+
+        # Scan plugins once at startup
+        try:
+            count = self._rescan_plugins()
+            log.info(f"Plugin catalog: {count} plugins under {self.plugins_dir}")
+        except Exception as e:
+            log.warning(f"Plugin scan failed: {e}")
 
         # WebSocket server for instances
         self._ws_server = await websockets.serve(
@@ -847,6 +1039,8 @@ class Broker:
         app.router.add_get("/api/state", self.http_state)
         app.router.add_post("/api/send", self.http_send)
         app.router.add_post("/api/clear", self.http_clear)
+        app.router.add_get("/api/plugins", self.http_plugins)
+        app.router.add_get("/api/plugins/{plugin_id}", self.http_plugin_detail)
 
         self._http_runner = web.AppRunner(app)
         await self._http_runner.setup()

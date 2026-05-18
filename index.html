@@ -764,6 +764,7 @@
       <button class="tab-btn" data-tab="tasks">TASKS<span class="tab-badge" id="badge-tasks" style="display:none"></span></button>
       <button class="tab-btn" data-tab="flows">FLOWS<span class="tab-badge" id="badge-flows" style="display:none"></span></button>
       <button class="tab-btn" data-tab="memory">MEMORY<span class="tab-badge" id="badge-memory" style="display:none"></span></button>
+      <button class="tab-btn" data-tab="plugins">PLUGINS<span class="tab-badge" id="badge-plugins" style="display:none"></span></button>
       <button class="tab-btn" data-tab="control">CONTROL<span class="tab-badge" id="badge-control" style="display:none"></span></button>
     </div>
     <div class="h-right">
@@ -882,6 +883,15 @@
         <div id="mem-list"></div>
       </div>
 
+      <!-- PLUGINS -->
+      <div class="tab-pane" id="pane-plugins">
+        <div class="section-head">
+          INSTALLED PLUGINS
+          <button class="toggle" id="plug-refresh">REFRESH</button>
+        </div>
+        <div id="plug-list" style="overflow:auto; flex:1; padding:8px 12px;"></div>
+      </div>
+
       <!-- CONTROL -->
       <div class="tab-pane" id="pane-control">
         <div id="ctl-tabs">
@@ -963,6 +973,8 @@ const STATE = {
   showThread: false, // mobile
   auditFilter: '',
   showThreadInMobile: false,
+  plugins: [],     // {id, marketplace, version, skills, agents, commands}
+  pluginsLoaded: false,
 };
 
 const AGENT_PALETTE = ['#C9A84C', '#6B9FD4', '#7EC8A4', '#D47B6B', '#B07FD4', '#6BD4C9', '#D4A46B', '#9B6BD4'];
@@ -1878,6 +1890,96 @@ function typeColor(type) {
   }[type] || 'var(--dim)';
 }
 
+// ---------- PLUGINS ----------
+function loadPlugins(force) {
+  if (STATE.pluginsLoaded && !force) return Promise.resolve();
+  return fetch('/api/plugins').then(r => r.json()).then(data => {
+    STATE.plugins = data.plugins || [];
+    STATE.pluginsLoaded = true;
+    renderPlugins();
+  }).catch(e => {
+    console.error('plugin load failed', e);
+  });
+}
+
+function renderPlugins() {
+  const list = $('plug-list');
+  if (!list) return;
+  clear(list);
+  if (!STATE.plugins.length) {
+    list.appendChild(el('div', {cls: 'empty-state', text: 'NO PLUGINS FOUND'}));
+    return;
+  }
+  // group by marketplace
+  const groups = {};
+  for (const p of STATE.plugins) {
+    const mkt = p.marketplace || 'other';
+    (groups[mkt] = groups[mkt] || []).push(p);
+  }
+  const marketplaces = Object.keys(groups).sort();
+  for (const mkt of marketplaces) {
+    list.appendChild(el('div', {cls: 'section-head', text: mkt + ' (' + groups[mkt].length + ')'}));
+    for (const p of groups[mkt]) {
+      const card = el('div', {cls: 'mem-entry',
+        style: {cursor: 'pointer'},
+        on: {click: () => openPluginModal(p.id)}});
+      const head = el('div', {cls: 'me-head'});
+      head.appendChild(el('span', {cls: 'me-key', text: p.id}));
+      head.appendChild(el('span', {cls: 'pill', text: 'v' + (p.version || '?'),
+        style: {color: 'var(--dim)', borderColor: 'var(--dim)', marginLeft: '6px'}}));
+      card.appendChild(head);
+      const sub = el('div', {cls: 'me-value',
+        text: `${p.skills} skill(s) · ${p.agents} agent(s) · ${p.commands} command(s)`});
+      card.appendChild(sub);
+      list.appendChild(card);
+    }
+  }
+}
+
+function openPluginModal(pluginId) {
+  fetch('/api/plugins/' + encodeURIComponent(pluginId)).then(r => r.json()).then(d => {
+    $('modal-t').textContent = (d.id || pluginId).toUpperCase() + ' · v' + (d.version || '?');
+    const body = $('modal-b');
+    clear(body);
+    body.style.textAlign = 'left';
+    body.style.maxHeight = '60vh';
+    body.style.overflow = 'auto';
+    const meta = el('div', {style: {marginBottom: '8px', fontSize: '11px', color: 'var(--dim)'}});
+    meta.appendChild(el('div', {text: 'marketplace: ' + (d.marketplace || '')}));
+    meta.appendChild(el('div', {text: 'path: ' + (d.path || '')}));
+    if (d.manifest && d.manifest.description) {
+      meta.appendChild(el('div', {text: d.manifest.description,
+        style: {marginTop: '6px', color: 'var(--body)'}}));
+    }
+    body.appendChild(meta);
+    const addList = (label, items) => {
+      if (!items || !items.length) return;
+      body.appendChild(el('div', {cls: 'section-head', text: label + ' (' + items.length + ')'}));
+      const ul = el('div', {style: {fontSize: '11px', fontFamily: 'monospace'}});
+      for (const it of items) ul.appendChild(el('div', {text: '· ' + it}));
+      body.appendChild(ul);
+    };
+    addList('SKILLS', d.skills);
+    addList('AGENTS', d.agents);
+    addList('COMMANDS', d.commands);
+    body.appendChild(el('div', {cls: 'section-head', text: 'MANIFEST'}));
+    body.appendChild(el('pre', {text: JSON.stringify(d.manifest || {}, null, 2),
+      style: {fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              background: 'var(--bg2, #1a1a1a)', padding: '8px', borderRadius: '4px'}}));
+    $('modal').classList.add('show');
+    const ok = $('modal-ok'), cancel = $('modal-cancel');
+    ok.textContent = 'CLOSE';
+    cancel.style.display = 'none';
+    const close = () => {
+      $('modal').classList.remove('show');
+      ok.textContent = 'CONFIRM';
+      cancel.style.display = '';
+      ok.removeEventListener('click', close);
+    };
+    ok.addEventListener('click', close);
+  }).catch(e => console.error('plugin detail failed', e));
+}
+
 // ---------- CONTROL ----------
 function renderApprovals() {
   const root = $('ctl-approvals');
@@ -2055,6 +2157,7 @@ function switchTab(tab) {
   localStorage.setItem('am.tab', tab);
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + tab));
+  if (tab === 'plugins') loadPlugins();
 }
 
 function switchCTab(tab) {
@@ -2199,6 +2302,10 @@ function wire() {
     sec.classList.toggle('collapsed');
     $('tmpl-toggle').textContent = sec.classList.contains('collapsed') ? 'SHOW' : 'HIDE';
   });
+
+  // Plugin refresh
+  const plugRefresh = $('plug-refresh');
+  if (plugRefresh) plugRefresh.addEventListener('click', () => loadPlugins(true));
 
   // Memory form
   $('mem-submit').addEventListener('click', () => {

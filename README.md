@@ -74,6 +74,36 @@ The UI shows these as `[RELAY] cc1→cc2` in the chat thread.
 
 Shared memory written via `broker_memory(...)` is visible to all instances and shown in the MEMORY tab.
 
+## Plugin bridge
+
+If you have Claude Code plugins installed under
+`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, the broker scans
+them at startup and exposes them through a discovery-only bridge. The bridge
+**does not execute** plugin code (that requires the Claude Code runtime).
+Instead it returns the resolved skill/agent/command path + manifest so an
+agent can read and apply the skill itself — and writes an audit row for every
+call.
+
+```bash
+# List installed plugins
+curl http://localhost:8765/api/plugins
+
+# Detail for a specific plugin (manifest + skill/agent/command lists)
+curl http://localhost:8765/api/plugins/apple-hig-expert
+```
+
+From an instance:
+
+```python
+broker_plugin_invoke("apple-hig-expert", "apple-hig-expert", target="my-app")
+# Listen for plugin_invoke_result on the incoming stream:
+#   {status: "discovered", path: "<abs path to SKILL.md>", manifest: {...}}
+```
+
+The UI's PLUGINS tab lists every installed plugin grouped by marketplace;
+click any row to see the full manifest, skill/agent/command inventory, and
+filesystem path.
+
 ## REST API (curl / cli.py)
 
 The broker exposes a small REST surface on `http://localhost:8765/api/`:
@@ -92,6 +122,10 @@ curl http://localhost:8765/api/state
 
 # Clear message history
 curl -X POST http://localhost:8765/api/clear
+
+# Plugin catalog
+curl http://localhost:8765/api/plugins
+curl http://localhost:8765/api/plugins/<plugin-id>
 ```
 
 Or use the wrapper:
