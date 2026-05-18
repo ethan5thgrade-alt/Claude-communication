@@ -52,6 +52,11 @@ broker_task_done("T003", result="merged in PR #41")
 broker_vote_and_wait("Ship M5?", ["yes", "no"])
 ```
 
+For typed event handling, call `connect.parse_event(payload)` inside your
+incoming-message hook — it returns a `MessageEvent` / `TaskAssignedEvent` /
+`MemoryEvent` / etc. dataclass (with IDE field help) for known event types,
+or `None` for unknown ones. The existing dict-based path is unaffected.
+
 ## Auto-start on Mac
 
 ```bash
