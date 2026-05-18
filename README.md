@@ -109,12 +109,45 @@ The UI handles up to 8 instances with an extended color palette. Just assign dis
 
 ## Tests
 
+### pytest
+
 ```bash
 cd ~/agent-mesh
-python3 -m pytest tests/ -v
+python3.13 -m pytest tests/ -v
 ```
 
-Tests spin the broker up on alternate ports (18765/18766), so they're safe to run alongside a live broker.
+Tests spin the broker up on alternate ports (18765/18766 for `test_broker.py`,
+18775/18776 for `test_clients.py`), so they're safe to run alongside a live
+broker. `test_broker.py` exercises the WS/REST protocols directly; `test_clients.py`
+drives `connect.py`'s sync helpers end-to-end against a session-scoped broker
+fixture.
+
+### Smoke script
+
+```bash
+bash scripts/smoke.sh
+```
+
+Spins the broker up on dedicated test ports (18998/18999), exercises every
+REST endpoint, and exits non-zero on any failure. Set `PYTHON_BIN` if your
+default `python3` doesn't have `websockets` + `aiohttp` installed
+(e.g. `PYTHON_BIN=python3.13 bash scripts/smoke.sh`).
+
+### Pre-commit
+
+```bash
+pip install pre-commit
+pre-commit install   # one-time, installs the git hook
+pre-commit run --all-files   # run manually
+```
+
+The config runs `ruff` (lint + format), `check-yaml`, and the standard
+end-of-file / trailing-whitespace hooks. See `.pre-commit-config.yaml`.
+
+### CI
+
+Every push / PR runs the pytest matrix (Python 3.10 / 3.11 / 3.12 / 3.13)
+and the smoke script on GitHub Actions — see `.github/workflows/ci.yml`.
 
 ## Troubleshooting
 
@@ -129,12 +162,19 @@ Tests spin the broker up on alternate ports (18765/18766), so they're safe to ru
 
 ```
 agent-mesh/
-├── broker.py          # Core relay: WS on 8766 + HTTP/UI on 8765
-├── connect.py         # Snippet each Claude Code instance runs
-├── cli.py             # REST sender for terminal use
-├── index.html         # Full UI — single self-contained file
-├── state.json         # Persisted state (created on first run)
+├── broker.py                   # Core relay: WS on 8766 + HTTP/UI on 8765
+├── connect.py                  # Snippet each Claude Code instance runs
+├── cli.py                      # REST sender for terminal use
+├── index.html                  # Full UI — single self-contained file
+├── state.json                  # Persisted state (created on first run)
 ├── tests/
-│   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+│   ├── test_broker.py          # WS/REST protocol tests against the broker
+│   └── test_clients.py         # End-to-end tests for connect.py helpers
+├── scripts/
+│   └── smoke.sh                # REST smoke test (spins broker, hits every endpoint)
+├── .github/workflows/ci.yml    # pytest matrix + smoke on push/PR
+├── .pre-commit-config.yaml     # ruff + standard hygiene hooks
+├── CONTRIBUTING.md             # branch/PR conventions
+├── ROADMAP.md                  # 100-item build-out (12 batches)
 └── README.md
 ```
