@@ -193,6 +193,65 @@ class Broker:
             })
         return out
 
+    # ------------------- votes -------------------
+    async def _maybe_resolve_vote(self, vote: dict):
+        """Check whether `vote` should auto-resolve and, if so, mark it resolved
+        and broadcast `vote_resolved` to all instances + the UI."""
+        if vote.get("status") != "open":
+            return
+        ballots: dict = vote.get("ballots") or {}
+        options: list = vote.get("options") or []
+        threshold = vote.get("threshold")
+
+        # tally
+        counts: dict[str, int] = {opt: 0 for opt in options}
+        for opt in ballots.values():
+            if opt in counts:
+                counts[opt] += 1
+
+        winner: Optional[str] = None
+
+        # threshold path
+        if isinstance(threshold, int) and threshold > 0:
+            # pick the option (if any) whose count >= threshold; tie-break alphabetically
+            qualifying = sorted([o for o, c in counts.items() if c >= threshold])
+            if qualifying:
+                winner = qualifying[0]
+
+        # all-voted path
+        if winner is None:
+            # required voter set = all currently-online instances + "you"
+            online_ids = {iid for iid, info in self.instances.items() if info.get("online")}
+            required = online_ids | {"you"}
+            voted = set(ballots.keys())
+            if required and required.issubset(voted):
+                # tally winner: highest count, alphabetical tie-break
+                max_count = max(counts.values()) if counts else 0
+                if max_count > 0:
+                    tied = sorted([o for o, c in counts.items() if c == max_count])
+                    winner = tied[0]
+                else:
+                    winner = sorted(options)[0] if options else None
+
+        if winner is None:
+            return
+
+        async with self.lock:
+            vote["status"] = "resolved"
+            vote["winner"] = winner
+            vote["resolved_at"] = now_iso()
+            self.audit("broker", "vote_resolved", f"{vote['id']}={winner}")
+            self.schedule_write()
+
+        payload = {
+            "type": "vote_resolved",
+            "vote_id": vote["id"],
+            "winner": winner,
+            "vote": vote,
+        }
+        await self.broadcast_instances(payload)
+        await self.broadcast_ui(payload)
+
     # ------------------- task dep cycle check -------------------
     def has_cycle(self, tasks: list[dict]) -> bool:
         graph = {t["id"]: list(t.get("deps") or []) for t in tasks}
@@ -472,6 +531,80 @@ class Broker:
                     self.schedule_write()
                     await self.state_update({"tasks": self.state["tasks"]})
 
+                elif mtype == "vote_create":
+                    if not instance_id:
+                        continue
+                    question = (msg.get("question") or "").strip()
+                    options = msg.get("options") or []
+                    if not question or not isinstance(options, list) or len(options) < 2:
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "error",
+                                "error": "vote_create requires question and >=2 options",
+                            }))
+                        except Exception:
+                            pass
+                        continue
+                    options = [str(o) for o in options]
+                    threshold = msg.get("threshold")
+                    if threshold is not None:
+                        try:
+                            threshold = int(threshold)
+                        except Exception:
+                            threshold = None
+                    async with self.lock:
+                        vid = self.next_id("V")
+                        vote = {
+                            "id": vid,
+                            "question": question,
+                            "options": list(options),
+                            "ballots": {},
+                            "threshold": threshold,
+                            "status": "open",
+                            "winner": None,
+                            "created_by": instance_id,
+                            "ts": now_iso(),
+                        }
+                        self.state["votes"].append(vote)
+                        self.audit(instance_id, "vote_create", f"{vid} q={question[:40]}")
+                        self.schedule_write()
+                    # echo back the new id so the creator can wait on it
+                    try:
+                        await ws.send(json.dumps({
+                            "type": "vote_pending",
+                            "vote_id": vid,
+                            "question": question,
+                            "options": list(options),
+                        }, default=str))
+                    except Exception:
+                        pass
+                    await self.state_update({"votes": self.state["votes"]})
+                    # notify other instances so they can cast
+                    await self.broadcast_instances({
+                        "type": "vote_open",
+                        "vote": vote,
+                    }, exclude=instance_id)
+
+                elif mtype == "vote_cast":
+                    if not instance_id:
+                        continue
+                    vote_id = msg.get("vote_id")
+                    option = msg.get("option")
+                    v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
+                    if not v:
+                        # unknown id — silent no-op (don't crash anyone)
+                        continue
+                    if v.get("status") != "open":
+                        continue
+                    if option not in v.get("options", []):
+                        continue
+                    async with self.lock:
+                        v.setdefault("ballots", {})[instance_id] = option
+                        self.audit(instance_id, "vote_cast", f"{vote_id}={option}")
+                        self.schedule_write()
+                    await self._maybe_resolve_vote(v)
+                    await self.state_update({"votes": self.state["votes"]})
+
                 elif mtype == "task_done":
                     if not instance_id:
                         continue
@@ -593,9 +726,47 @@ class Broker:
             if not v:
                 await ws.send_json({"type": "error", "error": "vote not found"})
                 return
+            if v.get("status") != "open":
+                return
+            if option not in v.get("options", []):
+                await ws.send_json({"type": "error", "error": "invalid option"})
+                return
             v.setdefault("ballots", {})["you"] = option
             self.audit("you", "vote", f"{vote_id}={option}")
             self.schedule_write()
+            await self._maybe_resolve_vote(v)
+            await self.state_update({"votes": self.state["votes"]})
+
+        elif action == "create_vote":
+            question = (data.get("question") or "").strip()
+            options = data.get("options") or []
+            if not question or not isinstance(options, list) or len(options) < 2:
+                await ws.send_json({"type": "error", "error": "create_vote requires question and >=2 options"})
+                return
+            options = [str(o) for o in options]
+            threshold = data.get("threshold")
+            if threshold is not None:
+                try:
+                    threshold = int(threshold)
+                except Exception:
+                    threshold = None
+            async with self.lock:
+                vid = self.next_id("V")
+                vote = {
+                    "id": vid,
+                    "question": question,
+                    "options": list(options),
+                    "ballots": {},
+                    "threshold": threshold,
+                    "status": "open",
+                    "winner": None,
+                    "created_by": "you",
+                    "ts": now_iso(),
+                }
+                self.state["votes"].append(vote)
+                self.audit("you", "vote_create", f"{vid} q={question[:40]}")
+                self.schedule_write()
+            await self.broadcast_instances({"type": "vote_open", "vote": vote})
             await self.state_update({"votes": self.state["votes"]})
 
         elif action == "create_task":

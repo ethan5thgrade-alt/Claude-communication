@@ -46,7 +46,27 @@ python3 -m pip install --user websockets aiohttp pytest pytest-asyncio
    broker_task_claim("T003")
    broker_task_status("T003", "Review")
    broker_task_done("T003", result="merged in PR #41")
+   broker_vote_create("Ship v2?", ["yes", "no"], threshold=2)        # fire-and-forget
+   broker_vote_cast("V001", "yes")                                    # cast a ballot
+   winner = broker_vote_and_wait("Pick stack", ["go", "rust"])        # blocks until resolved
    ```
+
+## Agent-to-agent consensus (votes)
+
+Any instance can call `broker_vote_create(question, options, threshold=None)` to
+open a vote. Other instances see a `vote_open` event and call
+`broker_vote_cast(vote_id, option)` to ballot. The broker auto-resolves the
+vote as soon as either:
+
+- any option's count reaches `threshold` (if set), or
+- every currently-online instance plus `you` has voted (mode-winner; ties break
+  alphabetically by option string).
+
+On resolution, every instance and the UI receive a `vote_resolved` event.
+`broker_vote_and_wait(...)` is the blocking convenience: it creates the vote,
+waits for the broker's `vote_pending` echo to learn the assigned id, then
+blocks until the corresponding `vote_resolved` arrives and returns the
+winning option (or `None` on timeout).
 
 ## Agent-to-agent task delegation
 
@@ -135,6 +155,6 @@ agent-mesh/
 ├── index.html         # Full UI — single self-contained file
 ├── state.json         # Persisted state (created on first run)
 ├── tests/
-│   └── test_broker.py # 9 tests covering relay/persistence/reconnect
+│   └── test_broker.py # tests covering relay/persistence/reconnect/votes
 └── README.md
 ```

@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = 18765
-INST_PORT = 18766
+UI_PORT = 18365
+INST_PORT = 18366
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
@@ -325,6 +325,111 @@ async def test_agent_task_create_backlogs_offline_assignee(started_broker):
                 break
         # Either delivery path is acceptable — tasks_init is preferred but backlog is the safety net
         assert got_in_tasks_init or got_in_backlog
+
+
+@pytest.mark.asyncio
+async def test_vote_two_options_resolves_on_threshold(started_broker):
+    """cc1 creates a vote with threshold=2; cc1 and cc2 both vote the same
+    option; vote_resolved is broadcast."""
+    async with websockets.connect(WS_URL) as ws1, websockets.connect(WS_URL) as ws2:
+        await _register(ws1, iid="cc1")
+        await _register(ws2, iid="cc2")
+        await asyncio.sleep(0.05)
+        # cc1 creates the vote
+        await ws1.send(json.dumps({
+            "type": "vote_create",
+            "question": "ship it?",
+            "options": ["yes", "no"],
+            "threshold": 2,
+        }))
+        # cc1 should get vote_pending with the new id
+        pend = await _recv_until(ws1, lambda p: p.get("type") == "vote_pending")
+        vid = pend["vote_id"]
+        # cc2 should see vote_open
+        opened = await _recv_until(ws2, lambda p: p.get("type") == "vote_open")
+        assert opened["vote"]["id"] == vid
+        # both cast "yes"
+        await ws1.send(json.dumps({"type": "vote_cast", "vote_id": vid, "option": "yes"}))
+        await ws2.send(json.dumps({"type": "vote_cast", "vote_id": vid, "option": "yes"}))
+        # both should receive vote_resolved
+        r1 = await _recv_until(ws1, lambda p: p.get("type") == "vote_resolved")
+        r2 = await _recv_until(ws2, lambda p: p.get("type") == "vote_resolved")
+        assert r1["vote_id"] == vid
+        assert r1["winner"] == "yes"
+        assert r2["winner"] == "yes"
+        # state reflects it
+        v = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+        assert v["status"] == "resolved"
+        assert v["winner"] == "yes"
+
+
+@pytest.mark.asyncio
+async def test_vote_tie_breaks_alphabetically(started_broker):
+    """threshold=None; three online instances; two vote 'b', one votes 'a' --
+    'b' wins by majority. Then re-test with a real tie: 1 'a', 1 'b', 1 'c'
+    is impossible with 2 options, so we use options ['a','b'] and split 1/1
+    among two voters with 'you' also voting to create a clear tie scenario."""
+    # Subtest A: clear tie between two options, broken alphabetically
+    async with websockets.connect(WS_URL) as ws1, \
+               websockets.connect(WS_URL) as ws2, \
+               websockets.connect(WS_URL) as ws3:
+        await _register(ws1, iid="cc1")
+        await _register(ws2, iid="cc2")
+        await _register(ws3, iid="cc3")
+        await asyncio.sleep(0.05)
+        # cc1 creates a vote with no threshold
+        await ws1.send(json.dumps({
+            "type": "vote_create",
+            "question": "which?",
+            "options": ["beta", "alpha"],  # intentionally non-alphabetical input order
+            "threshold": None,
+        }))
+        pend = await _recv_until(ws1, lambda p: p.get("type") == "vote_pending")
+        vid = pend["vote_id"]
+        # also "you" needs to vote since required set includes "you"
+        # do it through the UI WS
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(UI_WS_URL) as ui_ws:
+                init = await ui_ws.receive_json(timeout=2)
+                assert init["type"] == "init"
+                # cc1 votes alpha, cc2 votes beta, cc3 votes alpha → alpha wins by count
+                # But for a tie-break test: cc1->alpha, cc2->beta, cc3->beta, you->alpha
+                #   counts: alpha=2, beta=2 → tie → alphabetical "alpha"
+                await ws1.send(json.dumps({"type": "vote_cast", "vote_id": vid, "option": "alpha"}))
+                await ws2.send(json.dumps({"type": "vote_cast", "vote_id": vid, "option": "beta"}))
+                await ws3.send(json.dumps({"type": "vote_cast", "vote_id": vid, "option": "beta"}))
+                # before "you" casts, the vote must still be open
+                await asyncio.sleep(0.1)
+                v = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+                assert v["status"] == "open", "vote should not resolve before 'you' has voted"
+                # now "you" votes alpha — required set = {cc1,cc2,cc3,you} all voted
+                await ui_ws.send_json({"action": "vote", "vote_id": vid, "option": "alpha"})
+                r1 = await _recv_until(ws1, lambda p: p.get("type") == "vote_resolved")
+                assert r1["vote_id"] == vid
+                # alpha=2 (cc1, you), beta=2 (cc2, cc3) → tie → alphabetical => "alpha"
+                assert r1["winner"] == "alpha"
+
+
+@pytest.mark.asyncio
+async def test_vote_cast_unknown_id_is_noop(started_broker):
+    """Casting a ballot against a non-existent vote id should not crash."""
+    async with websockets.connect(WS_URL) as ws1:
+        await _register(ws1, iid="cc1")
+        await asyncio.sleep(0.05)
+        # send a cast for a vote that doesn't exist
+        await ws1.send(json.dumps({
+            "type": "vote_cast",
+            "vote_id": "V999",
+            "option": "yes",
+        }))
+        # broker must remain responsive — send a follow-up message and confirm a relay
+        await ws1.send(json.dumps({"type": "broadcast", "text": "still alive"}))
+        # no second instance, so just sleep and verify broker state untouched
+        await asyncio.sleep(0.2)
+        assert not any(v["id"] == "V999" for v in started_broker.state["votes"])
+        # connection still open
+        assert "cc1" in started_broker.instances
+        assert started_broker.instances["cc1"]["online"] is True
 
 
 @pytest.mark.asyncio
