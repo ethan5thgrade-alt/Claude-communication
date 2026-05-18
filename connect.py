@@ -33,6 +33,12 @@ _pending_approvals: dict = {}
 _pending_approval_waiters: list = []
 _approval_lock = threading.Lock()
 
+# vote-wait tracking: vote_id -> {"event": threading.Event, "winner": str|None}
+_pending_votes: dict = {}
+# stash for the most recently issued vote_create awaiting its server-assigned id
+_pending_vote_creates: list = []
+_vote_lock = threading.Lock()
+
 
 def _start_loop():
     global _loop, _loop_thread, _stop_event
@@ -83,6 +89,13 @@ def _fmt_incoming(payload: dict) -> str:
     if t == "approval_decision":
         verdict = "approved" if payload.get("decision") else "rejected"
         return f"[APPROVAL DECISION] {payload.get('id', '')} {verdict}: {payload.get('action', '')}"
+    if t == "vote_pending":
+        return f"[VOTE PENDING] {payload.get('vote_id', '')} q={payload.get('question', '')}"
+    if t == "vote_open":
+        v = payload.get("vote", {})
+        return f"[VOTE OPEN] {v.get('id', '')} q={v.get('question', '')} opts={v.get('options', [])}"
+    if t == "vote_resolved":
+        return f"[VOTE RESOLVED] {payload.get('vote_id', '')} winner={payload.get('winner', '')}"
     if t == "control":
         return f"[CONTROL] paused={payload.get('paused')}"
     return f"[{t or 'EVENT'}] {json.dumps(payload, default=str)}"
@@ -142,16 +155,19 @@ async def _client_loop():
                         _handle_approval_decision(payload)
                         print(_fmt_incoming(payload))
                         continue
+                    # vote events: handle then keep going (they should also print)
+                    _handle_vote_event(payload)
                     if ptype == "backlog":
                         msgs = payload.get("messages", [])
                         print(f"[BACKLOG] {len(msgs)} queued messages")
                         for m in msgs:
-                            # also dispatch approval events that landed in backlog
                             mt = m.get("type")
                             if mt == "approval_pending":
                                 _handle_approval_pending(m)
                             elif mt == "approval_decision":
                                 _handle_approval_decision(m)
+                            else:
+                                _handle_vote_event(m)
                             print("  " + _fmt_incoming(m))
                     else:
                         print(_fmt_incoming(payload))
@@ -274,6 +290,92 @@ def broker_task_status(task_id: str, status: str):
 
 def broker_task_done(task_id: str, result: str = ""):
     _schedule(_send_json({"type": "task_done", "id": task_id, "result": result}))
+
+
+# ---------------- votes ----------------
+def _handle_vote_event(payload: dict):
+    """Inspect an incoming payload and update the vote-wait registry.
+
+    - On `vote_pending`: hand the server-assigned vote_id to the most recent
+      caller of broker_vote_and_wait (FIFO of pending creates).
+    - On `vote_resolved`: set the event so a waiter unblocks.
+    """
+    t = payload.get("type")
+    if t == "vote_pending":
+        vid = payload.get("vote_id")
+        if not vid:
+            return
+        with _vote_lock:
+            if _pending_vote_creates:
+                slot = _pending_vote_creates.pop(0)
+                slot["vote_id"] = vid
+                _pending_votes[vid] = slot
+                slot["ready_event"].set()
+    elif t == "vote_resolved":
+        vid = payload.get("vote_id")
+        winner = payload.get("winner")
+        if not vid:
+            return
+        with _vote_lock:
+            slot = _pending_votes.get(vid)
+            if slot is not None:
+                slot["winner"] = winner
+                slot["event"].set()
+
+
+def broker_vote_create(question: str, options: list, threshold: Optional[int] = None):
+    """Create a vote. Fire-and-forget."""
+    _schedule(_send_json({
+        "type": "vote_create",
+        "question": question,
+        "options": list(options),
+        "threshold": threshold,
+    }))
+
+
+def broker_vote_cast(vote_id: str, option: str):
+    """Cast a ballot. Fire-and-forget."""
+    _schedule(_send_json({
+        "type": "vote_cast",
+        "vote_id": vote_id,
+        "option": option,
+    }))
+
+
+def broker_vote_and_wait(question: str, options: list, threshold: Optional[int] = None,
+                         timeout: float = 300.0) -> Optional[str]:
+    """Create a vote and block until it resolves. Returns the winning option (str)
+    or None on timeout."""
+    slot = {
+        "ready_event": threading.Event(),  # set when vote_pending arrives w/ id
+        "event": threading.Event(),         # set when vote_resolved arrives
+        "vote_id": None,
+        "winner": None,
+    }
+    with _vote_lock:
+        _pending_vote_creates.append(slot)
+    _schedule(_send_json({
+        "type": "vote_create",
+        "question": question,
+        "options": list(options),
+        "threshold": threshold,
+    }))
+    # wait briefly for the broker to echo back the assigned id
+    if not slot["ready_event"].wait(timeout=min(10.0, timeout)):
+        with _vote_lock:
+            try:
+                _pending_vote_creates.remove(slot)
+            except ValueError:
+                pass
+        return None
+    # now wait for resolution
+    if not slot["event"].wait(timeout=timeout):
+        with _vote_lock:
+            _pending_votes.pop(slot.get("vote_id"), None)
+        return None
+    with _vote_lock:
+        _pending_votes.pop(slot.get("vote_id"), None)
+    return slot["winner"]
 
 
 # Start the loop on import
