@@ -9,6 +9,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -1991,14 +1992,33 @@ def print_banner(ip: str, ui_port: int, instance_port: int):
     sep = "╠" + "═" * width + "╣"
     bot = "╚" + "═" * width + "╝"
 
+    # Color support: only when stdout is a real TTY and NO_COLOR is unset.
+    # Per https://no-color.org any non-empty NO_COLOR disables color.
+    use_color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    if use_color:
+        RESET = "\033[0m"
+        BOLD_GREEN = "\033[1;32m"
+        CYAN = "\033[36m"
+        YELLOW = "\033[33m"
+    else:
+        RESET = BOLD_GREEN = CYAN = YELLOW = ""
+
+    title = "        AGENT MESH — BROKER RUNNING"
+    ui_line = f" UI:        http://{ip}:{ui_port}"
+    rest_line = f" REST:      http://localhost:{ui_port}/api/"
+    inst_line = f" Instances: ws://localhost:{instance_port}"
+    snippet_line = f" Connect snippet:  python connect.py"
+
+    # (display_text, color) — display_text is uncolored so padding is computed
+    # off the visible width, then color is wrapped around the padded result.
     rows = [
-        "        AGENT MESH — BROKER RUNNING",
+        (title, BOLD_GREEN),
         None,
-        f" UI:        http://{ip}:{ui_port}",
-        f" REST:      http://localhost:{ui_port}/api/",
-        f" Instances: ws://localhost:{instance_port}",
+        (ui_line, CYAN),
+        (rest_line, CYAN),
+        (inst_line, CYAN),
         None,
-        f" Connect snippet:  python connect.py",
+        (snippet_line, YELLOW),
     ]
 
     print(top)
@@ -2006,7 +2026,12 @@ def print_banner(ip: str, ui_port: int, instance_port: int):
         if r is None:
             print(sep)
         else:
-            print("║" + pad(r) + "║")
+            text, color = r
+            padded = pad(text)
+            if color:
+                print("║" + color + padded + RESET + "║")
+            else:
+                print("║" + padded + "║")
     print(bot)
 
 

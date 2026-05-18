@@ -1292,3 +1292,20 @@ async def test_plugin_rest_endpoints(started_broker, tmp_path):
 
         async with session.get(REST_URL + "/api/plugins/nope") as r:
             assert r.status == 404
+
+
+# ============================================================================
+# Banner / startup output
+# ============================================================================
+
+def test_print_banner_emits_key_lines(capsys):
+    """print_banner prints the title and all URL/REST/instance/snippet lines
+    regardless of whether ANSI color is enabled."""
+    broker_mod.print_banner("10.0.0.5", 8765, 8766)
+    out = capsys.readouterr().out
+    assert "AGENT MESH" in out
+    assert "BROKER RUNNING" in out
+    assert "http://10.0.0.5:8765" in out
+    assert "http://localhost:8765/api/" in out
+    assert "ws://localhost:8766" in out
+    assert "python connect.py" in out
