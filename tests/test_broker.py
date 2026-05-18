@@ -19,8 +19,8 @@ sys.path.insert(0, str(ROOT))
 import broker as broker_mod  # noqa: E402
 
 
-UI_PORT = 19765
-INST_PORT = 19766
+UI_PORT = 18765
+INST_PORT = 18766
 WS_URL = f"ws://localhost:{INST_PORT}"
 UI_WS_URL = f"ws://localhost:{UI_PORT}/ui"
 REST_URL = f"http://localhost:{UI_PORT}"
@@ -735,6 +735,93 @@ async def test_auth_ui_ws_rejects_wrong_token(authed_broker):
         async with session.ws_connect(REST_URL + "/ui?token=secret") as ui_ws:
             init = await ui_ws.receive_json(timeout=2)
             assert init["type"] == "init"
+
+
+@pytest.mark.asyncio
+async def test_http_health_returns_ok(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(REST_URL + "/api/health") as r:
+            assert r.status == 200
+            data = await r.json()
+    assert data["ok"] is True
+    assert isinstance(data["uptime_seconds"], (int, float))
+    assert data["uptime_seconds"] >= 0
+    assert isinstance(data["online_instances"], int)
+    assert "build_sha" in data
+    assert isinstance(data["build_sha"], str)
+
+
+@pytest.mark.asyncio
+async def test_http_metrics_prom_format(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(REST_URL + "/api/metrics") as r:
+            assert r.status == 200
+            ctype = r.headers.get("Content-Type", "")
+            assert "text/plain" in ctype
+            body = await r.text()
+    assert "agent_mesh_uptime_seconds" in body
+    assert "agent_mesh_messages_total" in body
+    assert "agent_mesh_tasks_total" in body
+    assert "agent_mesh_instances_online" in body
+    # each non-empty line should have at least one whitespace-separated value
+    for line in body.strip().splitlines():
+        assert " " in line
+
+
+@pytest.mark.asyncio
+async def test_http_post_task_creates(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "rest-task", "assignee": "cc9",
+                                      "priority": "high", "deps": []}) as r:
+            assert r.status == 200
+            data = await r.json()
+    assert data["ok"] is True
+    assert data["task"]["title"] == "rest-task"
+    assert data["task"]["assignee"] == "cc9"
+    assert data["task"]["priority"] == "high"
+    assert any(t["title"] == "rest-task" for t in started_broker.state["tasks"])
+
+
+@pytest.mark.asyncio
+async def test_http_post_task_cycle_rejected(started_broker):
+    async with aiohttp.ClientSession() as session:
+        # T001
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "a", "deps": []}) as r:
+            assert r.status == 200
+        # T002 depends on T001
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "b", "deps": ["T001"]}) as r:
+            assert r.status == 200
+        # T003 depends on T002 AND T001 — fine
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "c", "deps": ["T002"]}) as r:
+            assert r.status == 200
+        # Now attempt T004 that depends on itself indirectly: depend on T004 forces cycle if it referenced itself,
+        # but we test by referencing a chain that loops via deps referencing future id — instead use direct self-loop
+        # via existing-id: depend on a nonexistent id "T004" referencing itself isn't a cycle (unknown nodes ignored).
+        # So craft a cycle: create T004 with deps=["T004"] (self-loop).
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "loop", "deps": ["T004"]}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "cyclic" in err.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_http_post_memory_writes(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/memory",
+                                json={"key": "API_SHAPE", "value": "{pct, ticker}",
+                                      "mem_type": "contract"}) as r:
+            assert r.status == 200
+            data = await r.json()
+    assert data["ok"] is True
+    assert data["memory"]["key"] == "API_SHAPE"
+    assert data["memory"]["value"] == "{pct, ticker}"
+    assert data["memory"]["type"] == "contract"
+    assert any(m["key"] == "API_SHAPE" for m in started_broker.state["memory"])
 
 
 @pytest.mark.asyncio

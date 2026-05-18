@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timezone
@@ -126,6 +127,34 @@ class Broker:
         # mDNS / Zeroconf advertisement (lazy; may be None if zeroconf not installed)
         self._zc = None
         self._zc_info = None
+
+        # uptime + build identifier
+        self._start_monotonic = time.monotonic()
+        self._build_sha = self._detect_build_sha()
+
+    # ------------------- build identity -------------------
+    @staticmethod
+    def _detect_build_sha() -> str:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                timeout=1,
+            )
+            sha = result.stdout.strip()
+            if result.returncode == 0 and sha:
+                return sha
+        except Exception:
+            pass
+        return "unknown"
+
+    def uptime_seconds(self) -> float:
+        return time.monotonic() - self._start_monotonic
+
+    def online_instance_count(self) -> int:
+        return sum(1 for info in self.instances.values() if info.get("online"))
 
     # ------------------- state persistence -------------------
     def _pre_migration_backup(self, source_version: int) -> None:
@@ -1445,6 +1474,100 @@ class Broker:
         await self.state_update({"messages": []})
         return web.json_response({"ok": True})
 
+    async def http_health(self, request):
+        return web.json_response({
+            "ok": True,
+            "uptime_seconds": self.uptime_seconds(),
+            "online_instances": self.online_instance_count(),
+            "build_sha": self._build_sha,
+        })
+
+    async def http_metrics(self, request):
+        lines = []
+        lines.append(f"agent_mesh_uptime_seconds {self.uptime_seconds()}")
+        lines.append(f"agent_mesh_messages_total {len(self.state['messages'])}")
+        lines.append(f"agent_mesh_tasks_total {len(self.state['tasks'])}")
+        lines.append(f"agent_mesh_instances_online {self.online_instance_count()}")
+        for iid, q in self.backlog.items():
+            # escape any double-quotes in iid for label safety
+            safe = str(iid).replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'agent_mesh_backlog_size{{instance="{safe}"}} {len(q)}')
+        body = "\n".join(lines) + "\n"
+        resp = web.Response(body=body.encode("utf-8"))
+        resp.headers["Content-Type"] = "text/plain; version=0.0.4; charset=utf-8"
+        return resp
+
+    async def http_instances(self, request):
+        return web.json_response(self.instances_snapshot())
+
+    async def http_tasks(self, request):
+        return web.json_response({"tasks": self.state["tasks"]})
+
+    async def http_memory(self, request):
+        return web.json_response({"memory": self.state["memory"]})
+
+    async def http_post_task(self, request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        title = (body.get("title") or "").strip()
+        if not title:
+            return web.json_response({"error": "empty title"}, status=400)
+        assignee = body.get("assignee", "") or ""
+        priority = body.get("priority", "normal")
+        deps = body.get("deps") or []
+        async with self.lock:
+            tid = self.next_id("T")
+            task = {
+                "id": tid,
+                "title": title,
+                "assignee": assignee,
+                "priority": priority,
+                "deps": list(deps),
+                "status": "Backlog",
+                "created_by": "you",
+                "ts": now_iso(),
+            }
+            if self.has_cycle(self.state["tasks"] + [task]):
+                self.state["counters"]["T"] -= 1
+                return web.json_response({"error": "cyclic task dependencies"}, status=400)
+            self.state["tasks"].append(task)
+            self.audit("you", "task_create", f"{tid} (REST)")
+            self.schedule_write()
+        if assignee:
+            await self.send_to_instance(assignee, {
+                "type": "task_assigned", "task": task,
+            })
+        await self.state_update({"tasks": self.state["tasks"]})
+        return web.json_response({"ok": True, "task": task})
+
+    async def http_post_memory(self, request):
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid json"}, status=400)
+        key = (body.get("key") or "").strip()
+        if not key:
+            return web.json_response({"error": "empty key"}, status=400)
+        value = body.get("value", "")
+        mem_type = body.get("mem_type", "contract")
+        async with self.lock:
+            entry = {
+                "id": self.next_id("M"),
+                "key": key,
+                "value": value,
+                "type": mem_type,
+                "by": "you",
+                "ts": now_iso(),
+            }
+            self.state["memory"].append(entry)
+            self.audit("you", "memory_write", f"{key} (REST)")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "memory_write", "memory": entry})
+        await self.broadcast_instances({"type": "memory_write", "memory": entry})
+        return web.json_response({"ok": True, "memory": entry})
+
     # ------------------- lifecycle -------------------
     async def start(self):
         self.load_state()
@@ -1462,6 +1585,13 @@ class Broker:
         app.router.add_get("/api/state", self.http_state)
         app.router.add_post("/api/send", self.http_send)
         app.router.add_post("/api/clear", self.http_clear)
+        app.router.add_get("/api/health", self.http_health)
+        app.router.add_get("/api/metrics", self.http_metrics)
+        app.router.add_get("/api/instances", self.http_instances)
+        app.router.add_get("/api/tasks", self.http_tasks)
+        app.router.add_get("/api/memory", self.http_memory)
+        app.router.add_post("/api/task", self.http_post_task)
+        app.router.add_post("/api/memory", self.http_post_memory)
 
         self._http_runner = web.AppRunner(app)
         await self._http_runner.setup()

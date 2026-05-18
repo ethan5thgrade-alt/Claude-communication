@@ -72,22 +72,32 @@ A zero-dependency TypeScript client lives in [`clients/`](./clients/). It
 mirrors `connect.py` and runs on Node 22+, Bun, Deno, and in browsers. See
 [`clients/README.md`](./clients/README.md).
 
+## REST API
+
+| Method | Path             | Purpose                                          |
+|--------|------------------|--------------------------------------------------|
+| GET    | `/api/status`    | Snapshot (instances, last 50 msgs, tasks, etc.)  |
+| GET    | `/api/state`     | Full persisted state                             |
+| GET    | `/api/health`    | Liveness + uptime + online count + build sha     |
+| GET    | `/api/metrics`   | Prometheus text-format metrics                   |
+| GET    | `/api/instances` | List of connected/known instances                |
+| GET    | `/api/tasks`     | All tasks                                        |
+| GET    | `/api/memory`    | All shared memory entries                        |
+| GET    | `/api/plugins`   | Catalog of installed Claude Code plugins         |
+| POST   | `/api/send`      | Send a message `{to, text}`                      |
+| POST   | `/api/clear`     | Clear message history                            |
+| POST   | `/api/task`      | Create a task `{title, assignee, priority, deps}`|
+| POST   | `/api/memory`    | Write memory `{key, value, mem_type}`            |
+
 ## Security — shared-token auth
 
-By default the broker binds to `0.0.0.0` and accepts any LAN connection. For
-shared networks, set a shared token and every endpoint will require it.
+By default the broker accepts any LAN connection. For shared networks, set
+`MESH_TOKEN` and every endpoint will require it:
 
 ```bash
 export MESH_TOKEN=$(openssl rand -hex 16)
-python3 broker.py       # logs "Shared-token auth ENABLED"
-# in another terminal:
-export MESH_TOKEN=...    # same value
-python3 connect.py
-```
-
-`cli.py` sends `X-Mesh-Token: $MESH_TOKEN` automatically; for raw curl:
-
-```bash
+python3 broker.py
+# instances + cli.py read the env var automatically; raw curl needs the header:
 curl -X POST http://localhost:8765/api/send \
      -H "X-Mesh-Token: $MESH_TOKEN" \
      -H 'Content-Type: application/json' \
@@ -110,6 +120,18 @@ BROKER_URL=ws://192.168.1.42:8766 python3 connect.py
 ```
 
 Some networks block multicast — set `BROKER_URL` manually in that case.
+
+## CLI
+
+`cli.py` wraps the REST surface:
+
+```bash
+python3 cli.py send cc1 "What are you working on?"
+python3 cli.py status | state | clear | health | metrics
+python3 cli.py instances | tasks | memory | discover
+python3 cli.py task "write CSV parser" --assignee cc2 --priority high
+python3 cli.py memorize API_SHAPE "{pct, ticker}"
+```
 
 ## File map
 
