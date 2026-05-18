@@ -71,6 +71,32 @@ A zero-dependency TypeScript client lives in [`clients/`](./clients/). It
 mirrors `connect.py` and runs on Node 22+, Bun, Deno, and in browsers. See
 [`clients/README.md`](./clients/README.md).
 
+## Security — shared-token auth
+
+By default the broker binds to `0.0.0.0` and accepts any LAN connection. For
+shared networks, set a shared token and every endpoint will require it.
+
+```bash
+export MESH_TOKEN=$(openssl rand -hex 16)
+python3 broker.py       # logs "Shared-token auth ENABLED"
+# in another terminal:
+export MESH_TOKEN=...    # same value
+python3 connect.py
+```
+
+`cli.py` sends `X-Mesh-Token: $MESH_TOKEN` automatically; for raw curl:
+
+```bash
+curl -X POST http://localhost:8765/api/send \
+     -H "X-Mesh-Token: $MESH_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"to":"cc1","text":"hi"}'
+```
+
+The UI WS expects `?token=...` in the query string. See
+[docs/security.md](docs/security.md) for the full model. Unset or empty
+`MESH_TOKEN` disables auth.
+
 ## File map
 
 ```

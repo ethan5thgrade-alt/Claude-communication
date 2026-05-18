@@ -2,11 +2,20 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
 
 BASE = "http://localhost:8765"
+MESH_TOKEN = os.environ.get("MESH_TOKEN") or None
+
+
+def _auth_headers() -> dict:
+    h = {}
+    if MESH_TOKEN:
+        h["X-Mesh-Token"] = MESH_TOKEN
+    return h
 
 
 def _pp(obj):
@@ -14,9 +23,15 @@ def _pp(obj):
 
 
 def _get(path: str):
+    req = urllib.request.Request(BASE + path, headers=_auth_headers(), method="GET")
     try:
-        with urllib.request.urlopen(BASE + path, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=5) as r:
             return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read())
+        except Exception:
+            return {"error": str(e)}
     except urllib.error.URLError as e:
         return {"error": str(e)}
     except Exception as e:
@@ -24,10 +39,12 @@ def _get(path: str):
 
 
 def _post(path: str, body: dict):
+    headers = {"Content-Type": "application/json"}
+    headers.update(_auth_headers())
     req = urllib.request.Request(
         BASE + path,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
