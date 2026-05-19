@@ -262,10 +262,28 @@
   /* ===== CHAT TAB ===== */
   #pane-chat { flex-direction: row; }
   #conv-list {
-    flex: 0 0 220px;
+    flex: 0 0 260px;
     border-right: 1px solid var(--border);
     overflow-y: auto;
     background: var(--surface);
+  }
+  #chat-empty {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px; padding: 40px; text-align: center;
+    color: var(--dim);
+  }
+  #chat-empty .e-title {
+    font-size: 14px; letter-spacing: 2px; color: var(--body);
+    font-weight: 700;
+  }
+  #chat-empty .e-sub { font-size: 11px; line-height: 1.6; max-width: 360px; }
+  #chat-empty button {
+    padding: 10px 18px; border-radius: 4px;
+    background: var(--gold); color: var(--on-accent);
+    border: 1px solid var(--gold);
+    font-size: 10px; letter-spacing: 2px; font-weight: 700;
+    text-transform: uppercase;
   }
   .conv-row {
     padding: 10px 12px; border-bottom: 1px solid var(--border);
@@ -823,6 +841,177 @@
     #kanban { grid-template-columns: repeat(4, 240px); }
     .templates-grid { grid-template-columns: 1fr 1fr; }
   }
+
+  /* ===== CHAT — sections, groups ===== */
+  .cl-section {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px 6px;
+    font-size: 7px; letter-spacing: 3px; color: var(--dim);
+    text-transform: uppercase;
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 1;
+  }
+  .cl-section button {
+    border: 1px solid var(--border); background: var(--surface-2);
+    padding: 3px 8px; border-radius: 3px;
+    font-size: 8px; letter-spacing: 1.5px;
+    color: var(--gold);
+  }
+  .cl-section button:hover { border-color: var(--gold); }
+  .conv-row.group-row .cr-name::before {
+    content: '◉ ';
+    color: var(--purple);
+    margin-right: 2px;
+  }
+  .cr-members {
+    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
+  }
+  .cr-member-chip {
+    display: inline-block;
+    padding: 1px 5px; border-radius: 8px;
+    font-size: 7px; letter-spacing: 0.5px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--dim);
+  }
+  .conv-row .cr-actions {
+    position: absolute; right: 8px; top: 8px;
+    display: none; gap: 4px;
+  }
+  .conv-row:hover .cr-actions { display: flex; }
+  .cr-actions button {
+    background: var(--surface-2); border: 1px solid var(--border);
+    padding: 2px 6px; border-radius: 3px;
+    font-size: 8px; color: var(--dim);
+  }
+  .cr-actions button:hover { color: var(--red); border-color: var(--red); }
+
+  /* group editor modal body */
+  #group-editor {
+    display: flex; flex-direction: column; gap: 10px;
+    min-width: 320px; max-width: 480px;
+  }
+  #group-editor input[type="text"] {
+    padding: 8px 10px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 12px; color: var(--body);
+  }
+  #group-editor .ge-list {
+    display: flex; flex-direction: column; gap: 4px;
+    max-height: 240px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: var(--surface-2);
+    padding: 6px;
+  }
+  #group-editor .ge-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 3px; cursor: pointer;
+    font-size: 11px;
+  }
+  #group-editor .ge-item:hover { background: var(--hover-tint); }
+  #group-editor .ge-item input { margin: 0; }
+  #group-editor .ge-item .ge-email {
+    margin-left: auto; color: var(--dim); font-size: 9px;
+  }
+  #group-editor .ge-count {
+    font-size: 9px; color: var(--dim); letter-spacing: 1px;
+  }
+
+  /* ===== CONNECT TAB ===== */
+  #pane-connect { padding: 0; overflow: hidden; flex-direction: column; }
+  #connect-wrap {
+    flex: 1; overflow-y: auto; padding: 16px;
+    background: var(--bg);
+  }
+  .connect-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 14px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .connect-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .cc-head { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px;
+             border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+  .cc-title { font-size: 10px; font-weight: 700; letter-spacing: 2px; color: var(--gold); }
+  .cc-sub   { font-size: 10px; color: var(--dim); }
+  .cc-field { display: flex; flex-direction: column; gap: 4px; }
+  .cc-field label {
+    font-size: 8px; letter-spacing: 2px; color: var(--dim);
+    text-transform: uppercase; display: flex; align-items: center; gap: 6px;
+  }
+  .cc-tag {
+    font-size: 7px; letter-spacing: 1px; padding: 1px 6px;
+    border: 1px solid var(--border); border-radius: 3px;
+    color: var(--blue); text-transform: uppercase;
+  }
+  .cc-row { display: flex; gap: 6px; align-items: stretch; }
+  .cc-row input, .cc-field input, .cc-field textarea {
+    flex: 1; padding: 8px 10px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-family: inherit; font-size: 11px; color: var(--body);
+    min-width: 0;
+  }
+  .cc-field textarea { resize: vertical; min-height: 70px; font-size: 10px; }
+  .cc-btn {
+    padding: 6px 12px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 9px; letter-spacing: 1.5px; color: var(--body);
+    text-transform: uppercase; cursor: pointer;
+    transition: all 120ms;
+    white-space: nowrap;
+  }
+  .cc-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .cc-btn.cc-btn-primary {
+    background: var(--gold); color: var(--on-accent); border-color: var(--gold);
+    font-weight: 700;
+  }
+  .cc-btn.cc-btn-primary:hover { opacity: 0.9; color: var(--on-accent); }
+  .cc-btn.copied { background: var(--green); color: var(--on-accent); border-color: var(--green); }
+  .cc-hint { font-size: 9px; color: var(--dim); line-height: 1.5; }
+  .cc-hint code {
+    background: var(--surface-2); padding: 1px 5px; border-radius: 3px;
+    border: 1px solid var(--border); font-size: 9px;
+  }
+  .cc-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 8px 0; }
+  #connect-qr {
+    width: 220px; height: 220px;
+    background: #fff; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 10px;
+  }
+  #connect-qr img { width: 100%; height: 100%; image-rendering: pixelated; }
+  #connect-qr .qr-skel { color: #888; font-size: 10px; letter-spacing: 1px; }
+  .cc-qr-caption { font-size: 9px; color: var(--dim); text-align: center; }
+  .cc-steps { display: flex; flex-direction: column; gap: 14px; }
+  .cc-step { display: flex; gap: 12px; align-items: flex-start; }
+  .cc-step-num {
+    flex: 0 0 26px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--surface-2); border: 1px solid var(--gold);
+    color: var(--gold); font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .cc-step-body { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 10px; }
+  .cc-step-body b { color: var(--body); font-size: 11px; letter-spacing: 1px; }
+  .cc-step-body pre {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 8px 10px;
+    font-size: 10px; color: var(--body);
+    overflow-x: auto; white-space: pre;
+  }
+  #connect-join-status:not(:empty) {
+    padding: 6px 10px; border-radius: 4px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    font-size: 10px;
+  }
+  #connect-join-status.ok    { color: var(--green); border-color: var(--green); }
+  #connect-join-status.err   { color: var(--red);   border-color: var(--red);   }
+  #connect-join-status.info  { color: var(--blue);  border-color: var(--blue);  }
 </style>
 </head>
 <body>
@@ -842,6 +1031,7 @@
       <button class="tab-btn" data-tab="flows">FLOWS<span class="tab-badge" id="badge-flows" style="display:none"></span></button>
       <button class="tab-btn" data-tab="memory">MEMORY<span class="tab-badge" id="badge-memory" style="display:none"></span></button>
       <button class="tab-btn" data-tab="plugins">PLUGINS<span class="tab-badge" id="badge-plugins" style="display:none"></span></button>
+      <button class="tab-btn" data-tab="connect">CONNECT<span class="tab-badge" id="badge-connect" style="display:none"></span></button>
       <button class="tab-btn" data-tab="control">CONTROL<span class="tab-badge" id="badge-control" style="display:none"></span></button>
     </div>
     <div class="h-right">
@@ -871,6 +1061,15 @@
             <div id="chat-title">No conversation selected</div>
             <div id="chat-typing"></div>
             <button id="chat-clear">CLEAR</button>
+          </div>
+          <div id="chat-empty" style="display:none">
+            <div class="e-title">Pick a chat — or make a group</div>
+            <div class="e-sub">
+              Click an instance on the left to chat with it 1-on-1,
+              choose <b>BROADCAST</b> to message every Claude Code at once,
+              or hit <b>+ NEW</b> under GROUPS to bundle several into one room.
+            </div>
+            <button id="empty-new-group">+ NEW GROUP</button>
           </div>
           <div id="chat-thread"></div>
           <div id="compose">
@@ -969,6 +1168,116 @@
           <button class="toggle" id="plug-refresh">REFRESH</button>
         </div>
         <div id="plug-list" style="overflow:auto; flex:1; padding:8px 12px;"></div>
+      </div>
+
+      <!-- CONNECT -->
+      <div class="tab-pane" id="pane-connect">
+        <div id="connect-wrap">
+          <div class="connect-grid">
+            <div class="connect-card">
+              <div class="cc-head">
+                <span class="cc-title">SHARE THIS BROKER</span>
+                <span class="cc-sub">Send the URL + token to a teammate so their Claude Code can join</span>
+              </div>
+              <div class="cc-field">
+                <label>LAN URL</label>
+                <div class="cc-row">
+                  <input type="text" id="connect-lan-url" readonly />
+                  <button class="cc-btn" data-copy="connect-lan-url">COPY</button>
+                </div>
+                <div class="cc-hint" id="connect-lan-hint">Anyone on the same Wi-Fi can use this.</div>
+              </div>
+              <div class="cc-field">
+                <label>WEBSOCKET URL <span class="cc-tag">for Claude Code</span></label>
+                <div class="cc-row">
+                  <input type="text" id="connect-ws-url" readonly />
+                  <button class="cc-btn" data-copy="connect-ws-url">COPY</button>
+                </div>
+                <div class="cc-hint">Set <code>BROKER_URL</code> to this value before running <code>connect.py</code>.</div>
+              </div>
+              <div class="cc-field">
+                <label>SHARED TOKEN</label>
+                <div class="cc-row">
+                  <input type="password" id="connect-token" readonly placeholder="(none — auth disabled)" />
+                  <button class="cc-btn" id="connect-token-show">SHOW</button>
+                  <button class="cc-btn" data-copy="connect-token">COPY</button>
+                </div>
+                <div class="cc-hint" id="connect-token-hint">Set <code>MESH_TOKEN</code> on the broker to require auth.</div>
+              </div>
+              <div class="cc-field">
+                <label>QUICK INVITE BUNDLE</label>
+                <textarea id="connect-bundle" readonly rows="4"></textarea>
+                <div class="cc-row" style="margin-top:6px">
+                  <button class="cc-btn cc-btn-primary" data-copy="connect-bundle">COPY BUNDLE</button>
+                  <button class="cc-btn" id="connect-regen">REGENERATE</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="connect-card">
+              <div class="cc-head">
+                <span class="cc-title">QR CODE</span>
+                <span class="cc-sub">Scan with another device on the same LAN</span>
+              </div>
+              <div class="cc-qr-wrap">
+                <div id="connect-qr"></div>
+                <div class="cc-qr-caption" id="connect-qr-caption">Opens this dashboard on the scanning device.</div>
+              </div>
+            </div>
+
+            <div class="connect-card">
+              <div class="cc-head">
+                <span class="cc-title">JOIN A REMOTE BROKER</span>
+                <span class="cc-sub">Connect this dashboard to someone else&rsquo;s broker</span>
+              </div>
+              <div class="cc-field">
+                <label>BROKER URL</label>
+                <input type="text" id="connect-join-url" placeholder="ws://192.168.1.42:8766  or  wss://abc123.ngrok.io" />
+              </div>
+              <div class="cc-field">
+                <label>TOKEN (optional)</label>
+                <input type="password" id="connect-join-token" placeholder="X-Mesh-Token if required" />
+              </div>
+              <div class="cc-row">
+                <button class="cc-btn cc-btn-primary" id="connect-join-go">CONNECT</button>
+                <button class="cc-btn" id="connect-join-paste">PASTE BUNDLE</button>
+              </div>
+              <div class="cc-hint" id="connect-join-status"></div>
+            </div>
+
+            <div class="connect-card">
+              <div class="cc-head">
+                <span class="cc-title">EXPOSE TO THE INTERNET</span>
+                <span class="cc-sub">Use one of these to reach beyond your LAN</span>
+              </div>
+              <div class="cc-steps">
+                <div class="cc-step">
+                  <div class="cc-step-num">1</div>
+                  <div class="cc-step-body">
+                    <b>ngrok (quickest)</b>
+                    <pre>ngrok http 8765
+ngrok http 8766   # in a second terminal for the WS port</pre>
+                    <span class="cc-hint">Share the <code>https://&hellip;.ngrok.io</code> URLs as the LAN + WS values above.</span>
+                  </div>
+                </div>
+                <div class="cc-step">
+                  <div class="cc-step-num">2</div>
+                  <div class="cc-step-body">
+                    <b>Cloudflare Tunnel</b>
+                    <pre>cloudflared tunnel --url http://localhost:8765</pre>
+                  </div>
+                </div>
+                <div class="cc-step">
+                  <div class="cc-step-num">3</div>
+                  <div class="cc-step-body">
+                    <b>Tailscale</b>
+                    <span class="cc-hint">Install Tailscale on both machines, then the LAN URL just works over the tailnet.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- CONTROL -->
@@ -1070,6 +1379,7 @@ const STATE = {
   showThreadInMobile: false,
   plugins: [],     // {id, marketplace, version, skills, agents, commands}
   pluginsLoaded: false,
+  channels: [],    // [{id, name, members:[instance_id], created_at}] from broker
 };
 
 // Color-blind-safe palette (Okabe-Ito)
@@ -1144,10 +1454,33 @@ function agentName(id) {
   return inst ? inst.name : id;
 }
 
+// The broker emits timestamps in two shapes:
+//   - numbers (Unix seconds, optimistic local messages and WS pushes)
+//   - ISO strings ("2026-05-19T03:56:38.237945+00:00", REST /api/status hist)
+// Normalize to a Date.
+function _toDate(ts) {
+  if (ts == null || ts === '') return null;
+  if (typeof ts === 'number') return new Date(ts * 1000);
+  if (typeof ts === 'string') {
+    // If it parses as ISO, use that; otherwise try numeric.
+    const iso = new Date(ts);
+    if (!isNaN(iso.getTime())) return iso;
+    const n = parseFloat(ts);
+    if (!isNaN(n)) return new Date(n * 1000);
+  }
+  return null;
+}
+
+function _tsToSeconds(ts) {
+  const d = _toDate(ts);
+  return d ? d.getTime() / 1000 : 0;
+}
+
 function timeAgo(ts) {
-  if (!ts) return '';
+  const secs = _tsToSeconds(ts);
+  if (!secs) return '';
   const now = Date.now() / 1000;
-  const d = now - ts;
+  const d = now - secs;
   if (d < 60) return Math.floor(d) + 's';
   if (d < 3600) return Math.floor(d/60) + 'm';
   if (d < 86400) return Math.floor(d/3600) + 'h';
@@ -1155,8 +1488,8 @@ function timeAgo(ts) {
 }
 
 function fmtTime(ts) {
-  if (!ts) return '';
-  const d = new Date(ts * 1000);
+  const d = _toDate(ts);
+  if (!d) return '';
   const hh = String(d.getHours()).padStart(2,'0');
   const mm = String(d.getMinutes()).padStart(2,'0');
   const ss = String(d.getSeconds()).padStart(2,'0');
@@ -1348,12 +1681,21 @@ function handleServerMessage(msg) {
     if (msg.approvals) STATE.approvals = msg.approvals;
     if (msg.votes) STATE.votes = msg.votes;
     if (msg.audit) STATE.audit = msg.audit;
+    if (msg.channels) STATE.channels = msg.channels;
     renderAll();
+  } else if (t === 'channels') {
+    STATE.channels = msg.channels || [];
+    renderConvList();
   } else if (t === 'message') {
     const m = {
-      from: msg.from, to: msg.to, text: msg.text,
-      ts: msg.ts || Date.now()/1000, relay: !!msg.relay
+      id: msg.id, from: msg.from, to: msg.to, text: msg.text,
+      ts: msg.ts || Date.now()/1000, relay: !!msg.relay,
+      channel: msg.channel || null,
     };
+    // Skip if we already have this id (poll/WS race or duplicate echo).
+    if (m.id && STATE.messages.some(x => x.id === m.id)) {
+      return;
+    }
     STATE.messages.push(m);
     // Unread tracking
     if (msg.from !== 'you') {
@@ -1482,7 +1824,11 @@ function renderSidebar() {
     }
     card.appendChild(row1);
 
-    card.appendChild(el('div', {cls: 'ac-role', text: (inst.role || 'idle')}));
+    const roleLine = (inst.role || 'idle')
+      + (inst.email ? '  ·  ' + inst.email : '');
+    const roleEl = el('div', {cls: 'ac-role', text: roleLine});
+    if (inst.email) roleEl.title = inst.email;
+    card.appendChild(roleEl);
     card.appendChild(el('div', {cls: 'ac-task', text: inst.task || '— no task —'}));
 
     const bar = el('div', {cls: 'workload-bar'});
@@ -1551,9 +1897,105 @@ function renderAgentStrip() {
 }
 
 // ---------- CHAT ----------
+function findGroup(gid) {
+  return STATE.channels.find(g => g.id === gid);
+}
+
+async function apiChannels() {
+  try {
+    const r = await fetch('/api/channels');
+    if (!r.ok) return;
+    const data = await r.json();
+    STATE.channels = data.channels || [];
+    renderConvList();
+  } catch (e) { /* ignore */ }
+}
+
+async function apiChannelCreate(name, members) {
+  const r = await fetch('/api/channels', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, members}),
+  });
+  return r.json();
+}
+
+async function apiChannelUpdate(cid, name, members) {
+  const r = await fetch('/api/channels/' + encodeURIComponent(cid), {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, members}),
+  });
+  return r.json();
+}
+
+async function apiChannelDelete(cid) {
+  const r = await fetch('/api/channels/' + encodeURIComponent(cid),
+                        {method: 'DELETE'});
+  return r.json();
+}
+
 function renderConvList() {
   const root = $('conv-list');
   clear(root);
+
+  // ----- GROUPS section -----
+  const gHead = el('div', {cls: 'cl-section'});
+  gHead.appendChild(el('span', {text: 'GROUPS'}));
+  gHead.appendChild(el('button', {text: '+ NEW',
+    on: {click: () => openGroupEditor(null)}}));
+  root.appendChild(gHead);
+
+  for (const g of STATE.channels) {
+    const tid = 'group:' + g.id;
+    const members = g.members || [];
+    const row = el('div', {
+      cls: 'conv-row group-row' + (STATE.currentThread === tid ? ' active' : ''),
+      on: {click: () => selectThread(tid)}
+    });
+    const r1 = el('div', {cls: 'cr-row1'});
+    r1.appendChild(el('div', {cls: 'cr-name', text: g.name || 'untitled'}));
+    if (STATE.unread[tid]) r1.appendChild(el('div', {cls: 'unread-dot'}));
+    row.appendChild(r1);
+
+    const chips = el('div', {cls: 'cr-members'});
+    const shown = members.slice(0, 5);
+    for (const mid of shown) {
+      const chip = el('span', {cls: 'cr-member-chip', text: agentName(mid)});
+      chip.style.color = agentColor(mid);
+      chips.appendChild(chip);
+    }
+    if (members.length > 5) {
+      chips.appendChild(el('span', {cls: 'cr-member-chip',
+        text: '+' + (members.length - 5)}));
+    }
+    if (members.length === 0) {
+      chips.appendChild(el('span', {cls: 'cr-member-chip', text: '(empty)'}));
+    }
+    row.appendChild(chips);
+
+    const actions = el('div', {cls: 'cr-actions'});
+    actions.appendChild(el('button', {text: 'EDIT',
+      on: {click: (e) => { e.stopPropagation(); openGroupEditor(g.id); }}}));
+    actions.appendChild(el('button', {text: '✕',
+      on: {click: (e) => {
+        e.stopPropagation();
+        confirmModal('DELETE GROUP?', `Delete group "${g.name}"? Messages remain.`, async () => {
+          await apiChannelDelete(g.id);
+          STATE.channels = STATE.channels.filter(x => x.id !== g.id);
+          if (STATE.currentThread === tid) selectThread('');
+          renderConvList();
+        });
+      }}}));
+    row.appendChild(actions);
+
+    root.appendChild(row);
+  }
+
+  // ----- BROADCAST + INSTANCES section -----
+  const iHead = el('div', {cls: 'cl-section'});
+  iHead.appendChild(el('span', {text: 'CHATS'}));
+  root.appendChild(iHead);
 
   // Broadcast row
   const bRow = el('div', {
@@ -1598,10 +2040,104 @@ function renderConvList() {
   }
 }
 
+function openGroupEditor(editId) {
+  const existing = editId ? findGroup(editId) : null;
+  const body = $('modal-b');
+  $('modal-t').textContent = existing ? 'EDIT GROUP' : 'NEW GROUP';
+  clear(body);
+  const wrap = el('div', {id: 'group-editor'});
+
+  const nameInput = el('input', {attrs: {type: 'text', placeholder: 'Group name (e.g. frontend)'}});
+  nameInput.value = existing ? existing.name : '';
+  wrap.appendChild(nameInput);
+
+  const count = el('div', {cls: 'ge-count', text: 'SELECT MEMBERS:'});
+  wrap.appendChild(count);
+
+  const list = el('div', {cls: 'ge-list'});
+  const selected = new Set(existing ? existing.members : []);
+
+  // Gather all known instance IDs (online + persisted)
+  const seen = new Set();
+  const everyone = [];
+  for (const inst of STATE.instances) {
+    if (seen.has(inst.id)) continue;
+    seen.add(inst.id);
+    everyone.push(inst);
+  }
+  if (everyone.length === 0) {
+    list.appendChild(el('div', {cls: 'cr-preview',
+      text: 'No instances yet. Connect a Claude Code first.',
+      style: {padding: '8px'}}));
+  }
+  for (const inst of everyone) {
+    const item = el('label', {cls: 'ge-item'});
+    const cb = el('input', {attrs: {type: 'checkbox'}});
+    cb.checked = selected.has(inst.id);
+    cb.addEventListener('change', () => {
+      if (cb.checked) selected.add(inst.id); else selected.delete(inst.id);
+      count.textContent = `SELECT MEMBERS:  ${selected.size} selected`;
+    });
+    item.appendChild(cb);
+    const lbl = el('span', {text: inst.name || inst.id});
+    lbl.style.color = agentColor(inst.id);
+    item.appendChild(lbl);
+    if (inst.email) item.appendChild(el('span', {cls: 'ge-email', text: inst.email}));
+    list.appendChild(item);
+  }
+  wrap.appendChild(list);
+  count.textContent = `SELECT MEMBERS:  ${selected.size} selected`;
+
+  body.appendChild(wrap);
+
+  // Open modal & wire buttons
+  $('modal').classList.add('show');
+  $('modal-ok').textContent = existing ? 'SAVE' : 'CREATE';
+  const ok = $('modal-ok'), cancel = $('modal-cancel');
+  const close = () => $('modal').classList.remove('show');
+  const cleanup = () => {
+    ok.removeEventListener('click', handleOk);
+    cancel.removeEventListener('click', handleCancel);
+  };
+  const handleOk = async () => {
+    const name = (nameInput.value || '').trim() || 'untitled';
+    const members = Array.from(selected);
+    try {
+      if (existing) {
+        const res = await apiChannelUpdate(existing.id, name, members);
+        if (res && res.channel) {
+          const idx = STATE.channels.findIndex(c => c.id === existing.id);
+          if (idx >= 0) STATE.channels[idx] = res.channel;
+        }
+      } else {
+        const res = await apiChannelCreate(name, members);
+        if (res && res.channel) {
+          STATE.channels.push(res.channel);
+          selectThread('group:' + res.channel.id);
+        }
+      }
+    } catch (e) {
+      console.error('channel save failed', e);
+    }
+    renderConvList();
+    close(); cleanup();
+  };
+  const handleCancel = () => { close(); cleanup(); };
+  ok.addEventListener('click', handleOk);
+  cancel.addEventListener('click', handleCancel);
+}
+
 function selectThread(id) {
   STATE.currentThread = id;
   STATE.unread[id] = 0;
   localStorage.setItem('am.thread', id);
+  // Picking a specific thread (instance or group) cancels broadcast mode.
+  // BROADCAST mode is only sticky when the user is on the 'all' thread.
+  if (id && id !== 'all' && STATE.broadcastMode) {
+    STATE.broadcastMode = false;
+    localStorage.setItem('am.bcast', '0');
+    applyBroadcastUI();
+  }
   const pane = $('pane-chat');
   pane.classList.add('show-thread');
   STATE.showThreadInMobile = true;
@@ -1619,6 +2155,15 @@ function renderChatHeader() {
   if (t === 'all') {
     title.textContent = 'BROADCAST · ALL INSTANCES';
     title.style.color = 'var(--red)';
+  } else if (t.startsWith('group:')) {
+    const g = findGroup(t.slice(6));
+    if (g) {
+      title.textContent = `◉ ${g.name}  ·  ${g.members.length} member${g.members.length===1?'':'s'}`;
+      title.style.color = 'var(--purple)';
+    } else {
+      title.textContent = 'GROUP (deleted)';
+      title.style.color = 'var(--dim)';
+    }
   } else {
     title.textContent = agentName(t);
     title.style.color = agentColor(t);
@@ -1628,6 +2173,15 @@ function renderChatHeader() {
 
 function isInThread(m, threadId) {
   if (threadId === 'all') return m.to === 'all' || m.from === 'all';
+  if (threadId.startsWith('group:')) {
+    // Server-authoritative: every message carries a `channel` field iff it
+    // belongs to this channel. Brand-new channels are empty until something
+    // is sent through them — no client-side tagging required.
+    return m.channel === threadId.slice(6);
+  }
+  // 1-on-1: exclude messages that belong to any channel (channel msgs are
+  // shown ONLY in the channel thread, not in the individual instance thread).
+  if (m.channel) return false;
   return (m.from === threadId && (m.to === 'you' || m.to == null)) ||
          (m.from === 'you' && m.to === threadId) ||
          (m.relay && (m.from === threadId || m.to === threadId));
@@ -1635,11 +2189,18 @@ function isInThread(m, threadId) {
 
 function renderChat() {
   const thread = $('chat-thread');
+  const empty = $('chat-empty');
+  const compose = $('compose');
   clear(thread);
   if (!STATE.currentThread) {
-    thread.appendChild(el('div', {cls: 'empty-state', text: 'Select a conversation to start'}));
+    if (empty) empty.style.display = 'flex';
+    thread.style.display = 'none';
+    if (compose) compose.style.display = 'none';
     return;
   }
+  if (empty) empty.style.display = 'none';
+  thread.style.display = '';
+  if (compose) compose.style.display = '';
   const msgs = STATE.messages.filter(m => isInThread(m, STATE.currentThread));
   if (!msgs.length) {
     thread.appendChild(el('div', {cls: 'empty-state', text: 'No messages yet'}));
@@ -2260,6 +2821,7 @@ function switchTab(tab) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + tab));
   if (tab === 'plugins') loadPlugins();
+  if (tab === 'connect') refreshConnect();
 }
 
 function switchCTab(tab) {
@@ -2364,6 +2926,10 @@ function wire() {
     pane.classList.remove('show-thread');
     STATE.showThreadInMobile = false;
   });
+
+  // Empty-state CTA
+  const emptyNew = $('empty-new-group');
+  if (emptyNew) emptyNew.addEventListener('click', () => openGroupEditor(null));
 
   // Chat clear
   $('chat-clear').addEventListener('click', () => {
@@ -2593,11 +3159,35 @@ function sendCurrent() {
   const composeText = $('compose-text');
   const text = composeText.value.trim();
   if (!text) return;
-  const to = STATE.broadcastMode ? 'all' : (STATE.currentThread || '');
+  // Group threads always route to their members — broadcastMode does NOT
+  // override an explicit group selection. Same for individual instance threads.
+  const cur = STATE.currentThread || '';
+  let to;
+  if (cur.startsWith('group:')) {
+    to = cur;
+  } else if (cur && cur !== 'all') {
+    to = cur;
+  } else {
+    to = STATE.broadcastMode ? 'all' : (cur || '');
+  }
   if (!to) return;
-  send({action: 'send', to, text});
-  // Optimistic append
-  STATE.messages.push({from: 'you', to, text, ts: Date.now()/1000, relay: false});
+
+  // Channel send: let the broker fan out + tag each msg with channel=<id>.
+  // No optimistic push here — the WS echoes come back fast and the periodic
+  // /api/state poll catches anything the WS misses.
+  if (typeof to === 'string' && to.startsWith('group:')) {
+    const gid = to.slice(6);
+    const g = findGroup(gid);
+    if (!g || !g.members || g.members.length === 0) {
+      composeText.placeholder = 'Group has no members — edit the group first.';
+      return;
+    }
+    send({action: 'send', to: 'channel:' + gid, text});
+  } else {
+    send({action: 'send', to, text});
+    STATE.messages.push({from: 'you', to, text, ts: Date.now()/1000, relay: false});
+  }
+
   composeText.value = '';
   composeText.style.height = 'auto';
   $('send-btn').disabled = true;
@@ -2623,25 +3213,251 @@ function applyBroadcastUI() {
 }
 
 // ============================================================================
+// CONNECT TAB
+// ============================================================================
+function brokerUrls() {
+  const loc = window.location;
+  const httpProto = loc.protocol === 'https:' ? 'https:' : 'http:';
+  const wsProto   = loc.protocol === 'https:' ? 'wss:'   : 'ws:';
+  const host = loc.hostname || 'localhost';
+  const httpPort = loc.port || '8765';
+  // Convention from broker.py: WS = HTTP port + 1.
+  let wsPort;
+  if (loc.port) {
+    const n = parseInt(loc.port, 10);
+    wsPort = Number.isFinite(n) ? String(n + 1) : '8766';
+  } else {
+    wsPort = '8766';
+  }
+  return {
+    http: `${httpProto}//${host}:${httpPort}`,
+    ws:   `${wsProto}//${host}:${wsPort}`,
+  };
+}
+
+function getMeshToken() {
+  // Token may be in the URL (?token=...) or saved in localStorage.
+  const url = new URL(window.location.href);
+  const t = url.searchParams.get('token') || localStorage.getItem('am.token') || '';
+  if (t) localStorage.setItem('am.token', t);
+  return t;
+}
+
+function buildInvite(urls, token) {
+  const lines = [
+    'AGENT MESH — invite',
+    `URL: ${urls.http}`,
+    `WS:  ${urls.ws}`,
+  ];
+  if (token) lines.push(`TOKEN: ${token}`);
+  lines.push('');
+  lines.push('Join from Claude Code:');
+  lines.push(`  export BROKER_URL=${urls.ws}${token ? `\n  export MESH_TOKEN=${token}` : ''}`);
+  lines.push('  python3 connect.py');
+  return lines.join('\n');
+}
+
+let _connectInit = false;
+function refreshConnect() {
+  const urls = brokerUrls();
+  const token = getMeshToken();
+  const lanInput = $('connect-lan-url');
+  const wsInput  = $('connect-ws-url');
+  const tokInput = $('connect-token');
+  const bundle   = $('connect-bundle');
+  if (lanInput) lanInput.value = urls.http;
+  if (wsInput)  wsInput.value  = urls.ws;
+  if (tokInput) tokInput.value = token;
+  if (bundle)   bundle.value   = buildInvite(urls, token);
+
+  const lanHint = $('connect-lan-hint');
+  if (lanHint) {
+    const host = window.location.hostname;
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.');
+    lanHint.textContent = isLocal
+      ? 'LAN-only — anyone on the same Wi-Fi can use this. For internet access, see EXPOSE TO THE INTERNET.'
+      : `Public host detected (${host}). Anyone on the internet with the token can join.`;
+  }
+  const tokHint = $('connect-token-hint');
+  if (tokHint) {
+    tokHint.innerHTML = token
+      ? `Auth enabled. Anyone joining must present this token.`
+      : `Set <code>MESH_TOKEN</code> on the broker to require auth.`;
+  }
+
+  // QR points at the HTTP dashboard URL with the token in the query string.
+  const qr = $('connect-qr');
+  if (qr) {
+    let qrData = urls.http;
+    if (token) qrData += `/?token=${encodeURIComponent(token)}`;
+    qr.innerHTML = '';
+    const img = document.createElement('img');
+    img.alt = 'Broker invite QR';
+    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=0&data=${encodeURIComponent(qrData)}`;
+    img.onerror = () => { qr.innerHTML = '<div class="qr-skel">QR generator offline</div>'; };
+    qr.appendChild(img);
+    const cap = $('connect-qr-caption');
+    if (cap) cap.textContent = `Encodes: ${qrData}`;
+  }
+
+  if (!_connectInit) {
+    _connectInit = true;
+    wireConnect();
+  }
+}
+
+function wireConnect() {
+  // Copy buttons
+  document.querySelectorAll('#pane-connect [data-copy]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const target = $(btn.dataset.copy);
+      if (!target) return;
+      const val = target.value || target.textContent || '';
+      try {
+        await navigator.clipboard.writeText(val);
+        const old = btn.textContent;
+        btn.textContent = 'COPIED';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = old; btn.classList.remove('copied'); }, 1200);
+      } catch (e) {
+        target.select && target.select();
+        document.execCommand && document.execCommand('copy');
+      }
+    });
+  });
+
+  // Show/hide token
+  const showBtn = $('connect-token-show');
+  if (showBtn) {
+    showBtn.addEventListener('click', () => {
+      const inp = $('connect-token');
+      if (!inp) return;
+      const showing = inp.type === 'text';
+      inp.type = showing ? 'password' : 'text';
+      showBtn.textContent = showing ? 'SHOW' : 'HIDE';
+    });
+  }
+
+  // Regenerate bundle (just re-reads current state)
+  const regen = $('connect-regen');
+  if (regen) regen.addEventListener('click', () => refreshConnect());
+
+  // Join remote broker
+  const joinGo = $('connect-join-go');
+  if (joinGo) {
+    joinGo.addEventListener('click', () => {
+      const raw = ($('connect-join-url').value || '').trim();
+      const tok = ($('connect-join-token').value || '').trim();
+      const status = $('connect-join-status');
+      if (!raw) {
+        status.className = 'err';
+        status.textContent = 'Enter a broker URL.';
+        return;
+      }
+      // Accept ws://host:port, wss://host:port, http://host:port, https://host:port, or host:port
+      let host, port, secure = false;
+      try {
+        let parsed;
+        if (/^[a-z]+:\/\//.test(raw)) {
+          parsed = new URL(raw);
+          secure = parsed.protocol === 'wss:' || parsed.protocol === 'https:';
+          host = parsed.hostname;
+          port = parsed.port;
+        } else {
+          const m = raw.match(/^([^:/]+)(?::(\d+))?/);
+          if (!m) throw new Error('bad url');
+          host = m[1]; port = m[2];
+        }
+        if (!port) port = secure ? '443' : '8766';
+        // The dashboard is on (ws port - 1) by broker.py convention.
+        const httpPort = String(Math.max(1, parseInt(port, 10) - 1));
+        const dashUrl = `${secure ? 'https' : 'http'}://${host}:${httpPort}/${tok ? `?token=${encodeURIComponent(tok)}` : ''}`;
+        status.className = 'info';
+        status.innerHTML = `Opening <code>${dashUrl}</code>…`;
+        setTimeout(() => { window.location.href = dashUrl; }, 600);
+      } catch (e) {
+        status.className = 'err';
+        status.textContent = 'Could not parse that URL. Try ws://host:8766 or host:8766.';
+      }
+    });
+  }
+
+  // Paste bundle into join form
+  const pasteBtn = $('connect-join-paste');
+  if (pasteBtn) {
+    pasteBtn.addEventListener('click', async () => {
+      const status = $('connect-join-status');
+      try {
+        const text = await navigator.clipboard.readText();
+        const ws = (text.match(/WS:\s*(\S+)/i)   || [])[1];
+        const tok = (text.match(/TOKEN:\s*(\S+)/i) || [])[1];
+        const url = ws || (text.match(/URL:\s*(\S+)/i) || [])[1];
+        if (url) $('connect-join-url').value = url;
+        if (tok) $('connect-join-token').value = tok;
+        status.className = 'info';
+        status.textContent = url ? 'Bundle pasted — click CONNECT to switch.' : 'No URL found in clipboard.';
+      } catch (e) {
+        status.className = 'err';
+        status.textContent = 'Clipboard read denied — paste the URL manually.';
+      }
+    });
+  }
+}
+
+// ============================================================================
 // BOOT
 // ============================================================================
+// Reconcile against the broker every few seconds. The WS push is the fast
+// path; this poll is defense-in-depth: if a frame is dropped (reconnect,
+// background tab throttling, browser nap), the UI catches up within ~4s
+// instead of staying silently desynced.
+async function reconcileFromBroker() {
+  try {
+    const r = await fetch('/api/state', {cache: 'no-store'});
+    if (!r.ok) return;
+    const data = await r.json();
+    let changed = false;
+    const known = new Set(STATE.messages.map(m => m.id).filter(Boolean));
+    for (const m of (data.messages || [])) {
+      if (!m.id || known.has(m.id)) continue;
+      STATE.messages.push({
+        id: m.id, from: m.from, to: m.to, text: m.text, ts: m.ts,
+        relay: !!m.relay, channel: m.channel || null,
+      });
+      changed = true;
+    }
+    if (Array.isArray(data.channels) &&
+        JSON.stringify(data.channels) !== JSON.stringify(STATE.channels)) {
+      STATE.channels = data.channels;
+      changed = true;
+    }
+    if (changed) {
+      renderChat();
+      renderConvList();
+      renderTabBadges();
+    }
+  } catch (e) { /* ignore */ }
+}
+
 function boot() {
   wire();
   setConnState('connecting');
   renderAll();
-  // Restore thread state
   if (STATE.currentThread) {
     const pane = $('pane-chat');
     if (window.innerWidth <= 700) pane.classList.add('show-thread');
   }
   connect();
+  apiChannels();
 
-  // Periodic re-render to update "time ago" labels
   setInterval(() => {
     if (STATE.currentTab === 'chat' || STATE.currentTab === 'tasks') {
       renderSidebar();
     }
   }, 30000);
+
+  // Self-heal poll — keeps the UI consistent even if WS misses pushes.
+  setInterval(reconcileFromBroker, 4000);
 }
 
 if (document.readyState === 'loading') {

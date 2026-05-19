@@ -113,6 +113,7 @@ def empty_state() -> dict:
         "counters": {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0, "PI": 0},
         "teams": {},           # team_id -> {id, name, room, invite_code, created_at, members:[]}
         "invite_codes": {},    # invite_code -> team_id
+        "channels": [],        # [{id, name, members:[instance_id], created_at}]
     }
 
 
@@ -127,6 +128,7 @@ DEFAULT_ROOM = "default"
 def _migrate_v1_to_v2(state: dict) -> dict:
     """v1 (no schema_version) -> v2: ensure instances_meta, counters, created_by on tasks."""
     state.setdefault("instances_meta", {})
+    state.setdefault("channels", [])
     counters = state.setdefault("counters", {})
     for prefix, default in {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0}.items():
         counters.setdefault(prefix, default)
@@ -503,6 +505,7 @@ class Broker:
                 "id": iid,
                 "name": info.get("name", iid),
                 "project": info.get("project", ""),
+                "email": info.get("email") or meta.get("email", ""),
                 "status": info.get("status", ""),
                 "task": info.get("task", ""),
                 "workload": info.get("workload", 0),
@@ -522,6 +525,7 @@ class Broker:
                 "id": iid,
                 "name": meta.get("name", iid),
                 "project": meta.get("project", ""),
+                "email": meta.get("email", ""),
                 "status": "",
                 "task": "",
                 "workload": 0,
@@ -928,6 +932,8 @@ class Broker:
                         continue
                     name = msg.get("name", instance_id)
                     project = msg.get("project", "")
+                    email = (msg.get("email") or "").strip()
+                    role_in = (msg.get("role") or "").strip()
                     room = (msg.get("room") or DEFAULT_ROOM).strip() or DEFAULT_ROOM
 
                     async with self.lock:
@@ -942,6 +948,7 @@ class Broker:
                             "ws": ws,
                             "name": name,
                             "project": project,
+                            "email": email,
                             "online": True,
                             "status": "online",
                             "task": "",
@@ -951,9 +958,15 @@ class Broker:
                         # persist meta
                         meta = self.state["instances_meta"].setdefault(instance_id, {})
                         meta.update({"name": name, "project": project, "room": room})
+                        if email:
+                            meta["email"] = email
+                        if role_in:
+                            meta["role"] = role_in
                         meta.setdefault("role", "")
+                        meta.setdefault("email", "")
                         meta.setdefault("paused", False)
-                        self.audit(instance_id, "register", f"name={name} project={project} room={room}")
+                        self.audit(instance_id, "register",
+                                   f"name={name} project={project} email={email or '-'} room={room}")
                         self.schedule_write()
 
                     # send memory init (room-scoped)
@@ -1431,8 +1444,43 @@ class Broker:
         if action == "send":
             to = data.get("to", "all")
             text = (data.get("text") or "").strip()
+            channel_in = data.get("channel")  # optional explicit channel
             if not text:
                 await ws.send_json({"type": "error", "error": "empty message"})
+                return
+            # Channel fan-out: to looks like "channel:<id>"
+            if isinstance(to, str) and to.startswith("channel:"):
+                cid = to[len("channel:"):]
+                ch = self._find_channel(cid)
+                if not ch:
+                    await ws.send_json({"type": "error",
+                                         "error": f"channel {cid} not found"})
+                    return
+                if not ch.get("members"):
+                    await ws.send_json({"type": "error",
+                                         "error": "channel has no members"})
+                    return
+                entries = []
+                async with self.lock:
+                    for member in ch["members"]:
+                        e = {
+                            "id": f"msg-{len(self.state['messages']) + 1}",
+                            "from": "you",
+                            "to": member,
+                            "text": text,
+                            "ts": now_iso(),
+                            "channel": cid,
+                        }
+                        self.state["messages"].append(e)
+                        entries.append(e)
+                    self.audit("you", "channel_send",
+                               f"channel={cid} members={len(ch['members'])}")
+                    self.schedule_write()
+                for e in entries:
+                    await self.send_to_instance(e["to"],
+                                                 {"type": "message", **e})
+                    await self.broadcast_ui({"type": "message", "message": e})
+                    await self._evaluate_flows(e)
                 return
             entry = {
                 "id": f"msg-{len(self.state['messages']) + 1}",
@@ -1441,6 +1489,8 @@ class Broker:
                 "text": text,
                 "ts": now_iso(),
             }
+            if channel_in:
+                entry["channel"] = str(channel_in)
             async with self.lock:
                 self.state["messages"].append(entry)
                 self.audit("you", "message", f"to={to}")
@@ -1780,11 +1830,46 @@ class Broker:
         text = (body.get("text") or "").strip()
         if not text:
             return self._json_response({"error": "empty text"}, status=400)
-        # Optional "from" — defaults to "you" (human). Allows a Claude Code
-        # instance to send a one-shot REST message as itself (cc1 → cc2).
         sender = (body.get("from") or "you").strip() or "you"
-        # Optional room — restrict routing to room members
         room = (body.get("room") or "").strip() or None
+        channel_in = body.get("channel")
+
+        # Channel fan-out: to="channel:<id>" → one message per member, each
+        # tagged with channel=<id> so the UI can filter cleanly.
+        if isinstance(to, str) and to.startswith("channel:"):
+            cid = to[len("channel:"):]
+            ch = self._find_channel(cid)
+            if not ch:
+                return self._json_response(
+                    {"error": f"channel {cid} not found"}, status=404)
+            if not ch.get("members"):
+                return self._json_response(
+                    {"error": "channel has no members"}, status=400)
+            entries = []
+            async with self.lock:
+                for member in ch["members"]:
+                    e = {
+                        "id": f"msg-{len(self.state['messages']) + 1}",
+                        "from": sender,
+                        "to": member,
+                        "text": text,
+                        "ts": now_iso(),
+                        "channel": cid,
+                    }
+                    if room:
+                        e["room"] = room
+                    self.state["messages"].append(e)
+                    entries.append(e)
+                self.audit(sender, "channel_send",
+                           f"channel={cid} members={len(ch['members'])} (REST)")
+                self.schedule_write()
+            for e in entries:
+                await self.send_to_instance(e["to"], {"type": "message", **e})
+                await self.broadcast_ui({"type": "message", "message": e})
+                await self._evaluate_flows(e)
+            return self._json_response({"ok": True, "messages": entries,
+                                         "channel": cid})
+
         entry = {
             "id": f"msg-{len(self.state['messages']) + 1}",
             "from": sender,
@@ -1794,24 +1879,103 @@ class Broker:
         }
         if room:
             entry["room"] = room
+        if channel_in:
+            entry["channel"] = str(channel_in)
         async with self.lock:
             self.state["messages"].append(entry)
-            self.audit(sender, "message", f"to={to} (REST)")
+            self.audit(sender, "message",
+                       f"to={to}{' channel=' + str(channel_in) if channel_in else ''} (REST)")
             self.schedule_write()
-        # Relay routing: anyone-to-all broadcasts; anyone-to-instance routes
-        # to that instance and (if sender isn't "you") also notifies the UI.
         if to == "all":
             await self.broadcast_instances({"type": "message", **entry},
                                            exclude=sender if sender != "you" else None,
                                            room=room)
         elif to == "you":
-            # purely UI delivery — broadcast_ui below handles it
             pass
         else:
             await self.send_to_instance(to, {"type": "message", **entry})
         await self.broadcast_ui({"type": "message", "message": entry})
         await self._evaluate_flows(entry)
         return self._json_response({"ok": True, "message": entry})
+
+    # ---- channels (server-side groups) -------------------------------------
+    async def http_channels_list(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        return self._json_response({"channels": self.state.get("channels", [])})
+
+    async def http_channels_create(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        name = (body.get("name") or "").strip() or "untitled"
+        members = body.get("members") or []
+        if not isinstance(members, list):
+            return self._json_response({"error": "members must be a list"}, status=400)
+        cid = "ch_" + str(int(time.time() * 1000)) + "_" + _generate_invite_code(4).lower()
+        channel = {
+            "id": cid,
+            "name": name,
+            "members": [str(m) for m in members if m],
+            "created_at": now_iso(),
+        }
+        async with self.lock:
+            self.state.setdefault("channels", []).append(channel)
+            self.audit("you", "channel_create",
+                       f"id={cid} name={name} members={len(channel['members'])}")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "channels", "channels": self.state["channels"]})
+        return self._json_response({"ok": True, "channel": channel})
+
+    async def http_channels_delete(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        cid = request.match_info.get("cid", "")
+        async with self.lock:
+            before = len(self.state.get("channels", []))
+            self.state["channels"] = [c for c in self.state.get("channels", [])
+                                      if c.get("id") != cid]
+            removed = before - len(self.state["channels"])
+            if removed:
+                self.audit("you", "channel_delete", f"id={cid}")
+                self.schedule_write()
+        await self.broadcast_ui({"type": "channels", "channels": self.state["channels"]})
+        return self._json_response({"ok": True, "removed": removed})
+
+    async def http_channels_update(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        cid = request.match_info.get("cid", "")
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        async with self.lock:
+            for c in self.state.get("channels", []):
+                if c.get("id") == cid:
+                    if "name" in body:
+                        c["name"] = (body["name"] or "").strip() or c.get("name", "")
+                    if "members" in body and isinstance(body["members"], list):
+                        c["members"] = [str(m) for m in body["members"] if m]
+                    self.audit("you", "channel_update", f"id={cid}")
+                    self.schedule_write()
+                    await self.broadcast_ui({"type": "channels",
+                                              "channels": self.state["channels"]})
+                    return self._json_response({"ok": True, "channel": c})
+        return self._json_response({"error": "channel not found"}, status=404)
+
+    def _find_channel(self, cid: str):
+        for c in self.state.get("channels", []):
+            if c.get("id") == cid:
+                return c
+        return None
 
     async def http_plugins(self, request):
         out = []
@@ -2139,6 +2303,11 @@ class Broker:
         # New endpoints: rooms and share-info
         app.router.add_get("/api/rooms", self.http_rooms)
         app.router.add_get("/api/share-info", self.http_share_info)
+        # channels (server-side groups)
+        app.router.add_get("/api/channels", self.http_channels_list)
+        app.router.add_post("/api/channels", self.http_channels_create)
+        app.router.add_delete("/api/channels/{cid}", self.http_channels_delete)
+        app.router.add_put("/api/channels/{cid}", self.http_channels_update)
         # Team / invite endpoints
         app.router.add_post("/api/teams", self.http_teams_create)
         app.router.add_get("/api/teams/{team_id}", self.http_teams_get)

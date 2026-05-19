@@ -22,12 +22,14 @@ shift
 PERSONA="You are an agent on the Agent Mesh. You're chatting with another Claude. Keep replies short (1-3 sentences). Don't ask the user anything — there is no user, only the other Claude. If the conversation feels resolved, say 'thanks, signing off' and stop."
 MAX_TURNS=8
 BUDGET="0.50"
+REPLY_TO_HUMAN=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --persona)    PERSONA="$2"; shift 2 ;;
-        --max-turns)  MAX_TURNS="$2"; shift 2 ;;
-        --budget-usd) BUDGET="$2"; shift 2 ;;
+        --persona)         PERSONA="$2"; shift 2 ;;
+        --max-turns)       MAX_TURNS="$2"; shift 2 ;;
+        --budget-usd)      BUDGET="$2"; shift 2 ;;
+        --reply-to-human)  REPLY_TO_HUMAN=1; shift ;;
         *) echo "unknown flag: $1" >&2; exit 1 ;;
     esac
 done
@@ -76,7 +78,14 @@ for m in data.get('messages', []):
         continue
     if m.get('from') == me:
         continue  # ignore my own messages
-    if m.get('to') not in (me, 'all'):
+    to = m.get('to')
+    sender = m.get('from')
+    # Broadcasts: only reply when the human sent them. Bot-to-bot broadcasts
+    # create infinite reply loops (A broadcasts -> B replies to=all -> A sees
+    # B's broadcast and replies -> ...), so we suppress them here.
+    if to == 'all' and sender != 'you':
+        continue
+    if to not in (me, 'all'):
         continue
     new.append(m)
 print(json.dumps(new))
@@ -94,10 +103,14 @@ for m in json.loads(sys.stdin.read()):
         sender=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('from',''))")
         text=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('text',''))")
         mid=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
+        orig_to=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('to',''))")
+        orig_channel=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('channel',''))")
 
-        # Skip messages from 'you' (the human) — only auto-reply to other agents.
-        if [ "$sender" = "you" ]; then
-            echo "[bot:${MY_ID}] skipping human message $mid"
+        # By default, skip 'you' (human) to avoid runaway human↔bot loops.
+        # Override with --reply-to-human when you WANT the bot to reply to the
+        # dashboard operator (e.g. testing from the CONNECT tab).
+        if [ "$sender" = "you" ] && [ "$REPLY_TO_HUMAN" -ne 1 ]; then
+            echo "[bot:${MY_ID}] skipping human message $mid (use --reply-to-human to enable)"
             echo "$mid" >> "$SEEN_FILE"
             continue
         fi
@@ -107,23 +120,45 @@ for m in json.loads(sys.stdin.read()):
         # Mark seen FIRST so a crashing claude call doesn't re-process forever.
         echo "$mid" >> "$SEEN_FILE"
 
-        # Invoke claude. --bare keeps it cheap; --allowedTools none means
-        # text-only reply (no shell/edit/file access from the bot).
+        # Invoke claude. --allowedTools none keeps it text-only (no shell/edit
+        # access from the bot). We deliberately do NOT pass --bare because it
+        # disables OAuth/keychain auth and only reads ANTHROPIC_API_KEY — most
+        # users authenticate via `claude /login`, not an API key.
+        # stderr captured to log so auth failures aren't silent.
         reply=$(claude -p "$text" \
-            --bare \
+            --model "${BOT_MODEL:-haiku}" \
             --append-system-prompt "$PERSONA" \
             --allowedTools "none" \
             --max-budget-usd "$BUDGET" \
             --effort low \
-            2>/dev/null) || reply=""
+            2>>"$HOME/.agent-mesh-inbox/${MY_ID}.claude.err") || reply=""
 
         if [ -z "$reply" ]; then
             echo "[bot:${MY_ID}] claude returned empty; not replying"
             continue
         fi
 
-        echo "[bot:${MY_ID}] → $sender: ${reply:0:80}"
-        "$SCRIPT_DIR/claude-talk" send "$sender" "$reply" >/dev/null || true
+        # Reply to the same audience as the original. If user broadcast to=all,
+        # the reply also goes to=all so it shows in the BROADCAST thread instead
+        # of disappearing into a 1-on-1 view.
+        reply_to="$sender"
+        if [ "$orig_to" = "all" ]; then
+            reply_to="all"
+        fi
+
+        echo "[bot:${MY_ID}] → $reply_to${orig_channel:+ (channel=$orig_channel)}: ${reply:0:80}"
+        body="$(python3 -c "
+import json, sys
+out = {'to': sys.argv[1], 'text': sys.argv[2], 'from': sys.argv[3]}
+ch = sys.argv[4] if len(sys.argv) > 4 else ''
+if ch:
+    out['channel'] = ch
+print(json.dumps(out))
+" "$reply_to" "$reply" "$MY_ID" "$orig_channel")"
+        curl -sf -X POST "${BASE}/api/send" \
+            -H 'Content-Type: application/json' \
+            ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+            -d "$body" >/dev/null || true
 
         # Also mark the reply we just sent so we don't re-process it on next poll.
         sleep 0.5
