@@ -171,6 +171,7 @@ for m in json.loads(sys.stdin.read()):
         context_and_guard=$(curl -sf "${BASE}/api/state" \
             ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
         | MY_ID="$MY_ID" ORIG_CHAN="$orig_channel" ORIG_TO="$orig_to" \
+          ORIG_FROM="$sender" \
           TRIGGER_ID="$mid" HISTORY_LIMIT="$HISTORY_LIMIT" \
           BOT_CHAIN_LIMIT="$BOT_CHAIN_LIMIT" \
           python3 -c '
@@ -178,6 +179,7 @@ import json, os, sys, datetime
 me = os.environ["MY_ID"]
 ch = os.environ.get("ORIG_CHAN","")
 to = os.environ.get("ORIG_TO","")
+frm = os.environ.get("ORIG_FROM","")
 trig = os.environ.get("TRIGGER_ID","")
 limit = int(os.environ.get("HISTORY_LIMIT","10"))
 guard = int(os.environ.get("BOT_CHAIN_LIMIT","4"))
@@ -192,15 +194,19 @@ def display(iid):
     return meta.get(iid, {}).get("name", iid)
 
 # Filter to the thread that contains the trigger.
+# Partner = whoever sent the trigger ("you" for human, or another cc-*).
+# Including agent-to-agent threads here is what unblocks T06.
 if ch:
     rel = [m for m in msgs if m.get("channel") == ch]
 elif to == "all":
     rel = [m for m in msgs if m.get("to") == "all" or
            (m.get("from") == "you" and m.get("to") == me)]
 else:
+    partner = frm or "you"
     rel = [m for m in msgs
-           if (m.get("from") == "you" and m.get("to") == me)
-           or (m.get("from") == me and m.get("to") == "you")]
+           if not m.get("channel")
+           and ((m.get("from") == partner and m.get("to") == me)
+                or (m.get("from") == me and m.get("to") == partner))]
 
 # Trim to a window ending at the trigger (inclusive).
 trig_idx = next((i for i, m in enumerate(rel) if m.get("id") == trig),
