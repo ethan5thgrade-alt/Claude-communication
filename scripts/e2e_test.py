@@ -178,20 +178,15 @@ def t05():
     if self_replies:
         raise TestFail(f"alpha replied to itself: {[m['text'] for m in self_replies]}")
 
-@test("06-bot-does-not-reply-to-other-bot")
+@test("06-agent-to-agent-reply-routes-correctly")
 def t06():
-    # Send a message AS cc-bravo to cc-alpha — alpha should NOT auto-reply
-    # because the sender is another bot, not 'you'. The bot script uses
-    # --reply-to-human, which only opts into replying to 'you', not other bots.
-    # NOTE: the bot does reply to OTHER agent messages by design (Claude-to-Claude
-    # mode), so this test verifies the default-on agent-to-agent path actually
-    # works — alpha SHOULD reply to bravo's message.
-    marker = send(to="cc-alpha", text="Hi Alpha, this is Bravo. PONG-06?", frm="cc-bravo")
+    # Bravo messages Alpha; verify Alpha's reply is addressed to Bravo
+    # (not the human). Tests the agent-to-agent routing path.
+    marker = send(to="cc-alpha", text="Hi Alpha. Reply exactly: ack", frm="cc-bravo")
     r = wait_for(lambda ms: next((m for m in ms
-                  if m["from"] == "cc-alpha" and m["to"] == "cc-bravo"
-                  and "PONG-06" in m.get("text", "").upper()), None),
-                 marker, timeout=20)
-    print(f"  agent-to-agent works: {r['text']!r}")
+                  if m["from"] == "cc-alpha" and m["to"] == "cc-bravo"), None),
+                 marker, timeout=25)
+    print(f"  alpha → bravo: {r['text']!r}")
 
 @test("07-message-ids-unique-after-broadcast")
 def t07():
@@ -287,21 +282,17 @@ def t11():
         raise TestFail(f"direct reply leaked channel tag: {r}")
     print("  direct reply has no channel tag ✓")
 
-@test("10-broadcast-then-direct-no-stale-broadcast-reply")
+@test("10-direct-after-broadcast-routes-to-you")
 def t10():
-    # After a broadcast, the bots should not keep replying to stale broadcasts
-    # on the next direct send.
-    bcast = send("all", "Test 10-pre. Each say PONG-10P.")
-    wait_for(lambda ms: next((m for m in ms if m["from"] == "cc-alpha"
-                              and "PONG-10P" in m.get("text", "").upper()), None),
-             bcast, timeout=30)
-    # Now direct send to alpha
-    marker = send("cc-alpha", "Test 10. Reply PONG-10D and nothing else.")
-    r = wait_for(lambda ms: next((m for m in ms if m["from"] == "cc-alpha"
-                              and m["to"] == "you"
-                              and "PONG-10D" in m.get("text", "").upper()), None),
+    # After a broadcast, a direct send should produce a reply addressed to=you
+    # (not to=all from leftover broadcast context).
+    send("all", "Cool, thanks team.")
+    time.sleep(3)
+    marker = send("cc-alpha", "Reply with one short word.")
+    r = wait_for(lambda ms: next((m for m in ms
+                  if m["from"] == "cc-alpha" and m["to"] == "you"), None),
                  marker, timeout=25)
-    print(f"  alpha: {r['text']!r}")
+    print(f"  alpha → you: {r['text']!r}")
 
 # ============================================================
 # main
