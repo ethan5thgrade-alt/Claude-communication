@@ -19,10 +19,11 @@ set -euo pipefail
 MY_ID="${1:?usage: claude-talk-bot <my-id> [--persona '...'] [--max-turns N] [--budget-usd X]}"
 shift
 
-PERSONA="You are an agent on the Agent Mesh. You're chatting with another Claude. Keep replies short (1-3 sentences). Don't ask the user anything — there is no user, only the other Claude. If the conversation feels resolved, say 'thanks, signing off' and stop."
+PERSONA="You are an agent on the Agent Mesh. Keep replies short (1-3 sentences)."
 MAX_TURNS=8
 BUDGET="0.50"
 REPLY_TO_HUMAN=0
+REPLY_TO_AGENTS=0   # default OFF — prevents bot-to-bot loops
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -30,6 +31,7 @@ while [ $# -gt 0 ]; do
         --max-turns)       MAX_TURNS="$2"; shift 2 ;;
         --budget-usd)      BUDGET="$2"; shift 2 ;;
         --reply-to-human)  REPLY_TO_HUMAN=1; shift ;;
+        --reply-to-agents) REPLY_TO_AGENTS=1; shift ;;
         *) echo "unknown flag: $1" >&2; exit 1 ;;
     esac
 done
@@ -106,11 +108,17 @@ for m in json.loads(sys.stdin.read()):
         orig_to=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('to',''))")
         orig_channel=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('channel',''))")
 
-        # By default, skip 'you' (human) to avoid runaway human↔bot loops.
-        # Override with --reply-to-human when you WANT the bot to reply to the
-        # dashboard operator (e.g. testing from the CONNECT tab).
+        # Reply policy:
+        #   sender == 'you'  (human via dashboard) -> requires --reply-to-human
+        #   sender == another agent (cc-*)         -> requires --reply-to-agents
+        # Both off by default to prevent loops and accidental cost.
         if [ "$sender" = "you" ] && [ "$REPLY_TO_HUMAN" -ne 1 ]; then
-            echo "[bot:${MY_ID}] skipping human message $mid (use --reply-to-human to enable)"
+            echo "[bot:${MY_ID}] skipping human message $mid (use --reply-to-human)"
+            echo "$mid" >> "$SEEN_FILE"
+            continue
+        fi
+        if [ "$sender" != "you" ] && [ "$REPLY_TO_AGENTS" -ne 1 ]; then
+            echo "[bot:${MY_ID}] skipping agent message $mid from $sender (use --reply-to-agents)"
             echo "$mid" >> "$SEEN_FILE"
             continue
         fi

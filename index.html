@@ -1947,7 +1947,7 @@ function renderConvList() {
   root.appendChild(gHead);
 
   for (const g of STATE.channels) {
-    const tid = 'group:' + g.id;
+    const tid = g.id;
     const members = g.members || [];
     const row = el('div', {
       cls: 'conv-row group-row' + (STATE.currentThread === tid ? ' active' : ''),
@@ -2113,7 +2113,7 @@ function openGroupEditor(editId) {
         const res = await apiChannelCreate(name, members);
         if (res && res.channel) {
           STATE.channels.push(res.channel);
-          selectThread('group:' + res.channel.id);
+          selectThread(res.channel.id);
         }
       }
     } catch (e) {
@@ -2131,13 +2131,12 @@ function selectThread(id) {
   STATE.currentThread = id;
   STATE.unread[id] = 0;
   localStorage.setItem('am.thread', id);
-  // Picking a specific thread (instance or group) cancels broadcast mode.
-  // BROADCAST mode is only sticky when the user is on the 'all' thread.
+  // Picking a specific thread (instance or channel) cancels broadcast mode.
   if (id && id !== 'all' && STATE.broadcastMode) {
     STATE.broadcastMode = false;
     localStorage.setItem('am.bcast', '0');
-    applyBroadcastUI();
   }
+  applyBroadcastUI();  // refreshes the BROADCAST toggle visibility
   const pane = $('pane-chat');
   pane.classList.add('show-thread');
   STATE.showThreadInMobile = true;
@@ -2155,13 +2154,13 @@ function renderChatHeader() {
   if (t === 'all') {
     title.textContent = 'BROADCAST · ALL INSTANCES';
     title.style.color = 'var(--red)';
-  } else if (t.startsWith('group:')) {
-    const g = findGroup(t.slice(6));
+  } else if (t.startsWith('ch_')) {
+    const g = findGroup(t);
     if (g) {
-      title.textContent = `◉ ${g.name}  ·  ${g.members.length} member${g.members.length===1?'':'s'}`;
+      title.textContent = `# ${g.name}  ·  ${g.members.length} member${g.members.length===1?'':'s'}`;
       title.style.color = 'var(--purple)';
     } else {
-      title.textContent = 'GROUP (deleted)';
+      title.textContent = '# (deleted channel)';
       title.style.color = 'var(--dim)';
     }
   } else {
@@ -2173,11 +2172,10 @@ function renderChatHeader() {
 
 function isInThread(m, threadId) {
   if (threadId === 'all') return m.to === 'all' || m.from === 'all';
-  if (threadId.startsWith('group:')) {
-    // Server-authoritative: every message carries a `channel` field iff it
-    // belongs to this channel. Brand-new channels are empty until something
-    // is sent through them — no client-side tagging required.
-    return m.channel === threadId.slice(6);
+  if (threadId.startsWith('ch_')) {
+    // Server-authoritative: every message in a channel carries channel=<id>.
+    // Brand-new channels start empty by definition.
+    return m.channel === threadId;
   }
   // 1-on-1: exclude messages that belong to any channel (channel msgs are
   // shown ONLY in the channel thread, not in the individual instance thread).
@@ -3159,31 +3157,26 @@ function sendCurrent() {
   const composeText = $('compose-text');
   const text = composeText.value.trim();
   if (!text) return;
-  // Group threads always route to their members — broadcastMode does NOT
-  // override an explicit group selection. Same for individual instance threads.
   const cur = STATE.currentThread || '';
-  let to;
-  if (cur.startsWith('group:')) {
-    to = cur;
-  } else if (cur && cur !== 'all') {
-    to = cur;
-  } else {
-    to = STATE.broadcastMode ? 'all' : (cur || '');
-  }
-  if (!to) return;
 
-  // Channel send: let the broker fan out + tag each msg with channel=<id>.
-  // No optimistic push here — the WS echoes come back fast and the periodic
-  // /api/state poll catches anything the WS misses.
-  if (typeof to === 'string' && to.startsWith('group:')) {
-    const gid = to.slice(6);
-    const g = findGroup(gid);
+  // Channel send: broker fans out + tags each msg with channel=<id>.
+  // No optimistic local push — the WS echo / 4s poll will show it.
+  if (cur.startsWith('ch_')) {
+    const g = findGroup(cur);
     if (!g || !g.members || g.members.length === 0) {
-      composeText.placeholder = 'Group has no members — edit the group first.';
+      composeText.placeholder = 'Channel has no members — edit it first.';
       return;
     }
-    send({action: 'send', to: 'channel:' + gid, text});
+    send({action: 'send', to: 'channel:' + cur, text});
   } else {
+    // Direct or broadcast: broadcastMode only applies when no specific thread.
+    let to;
+    if (cur && cur !== 'all') {
+      to = cur;
+    } else {
+      to = STATE.broadcastMode ? 'all' : (cur || '');
+    }
+    if (!to) return;
     send({action: 'send', to, text});
     STATE.messages.push({from: 'you', to, text, ts: Date.now()/1000, relay: false});
   }
@@ -3210,6 +3203,18 @@ function applyBroadcastUI() {
   const compose = $('compose');
   btn.classList.toggle('active', STATE.broadcastMode);
   compose.classList.toggle('broadcast', STATE.broadcastMode);
+  // BROADCAST toggle is only meaningful when there's no specific channel
+  // or instance selected. When the user picks a channel (ch_*) we hide it so
+  // it can't accidentally override the channel send routing.
+  const cur = STATE.currentThread || '';
+  const inChannel = cur.startsWith('ch_');
+  if (btn) {
+    btn.disabled = inChannel;
+    btn.style.opacity = inChannel ? '0.35' : '';
+    btn.title = inChannel
+      ? 'Broadcast disabled while a channel is selected'
+      : 'Broadcast to all instances';
+  }
 }
 
 // ============================================================================

@@ -113,7 +113,7 @@ def empty_state() -> dict:
         "counters": {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0, "PI": 0},
         "teams": {},           # team_id -> {id, name, room, invite_code, created_at, members:[]}
         "invite_codes": {},    # invite_code -> team_id
-        "channels": [],        # [{id, name, members:[instance_id], created_at}]
+        "channels": {},        # channel_id -> {id, name, members:[instance_id], created_at}
     }
 
 
@@ -128,7 +128,12 @@ DEFAULT_ROOM = "default"
 def _migrate_v1_to_v2(state: dict) -> dict:
     """v1 (no schema_version) -> v2: ensure instances_meta, counters, created_by on tasks."""
     state.setdefault("instances_meta", {})
-    state.setdefault("channels", [])
+    # channels migration: if it was previously a list, convert to id-keyed dict
+    ch = state.get("channels")
+    if isinstance(ch, list):
+        state["channels"] = {c.get("id", ""): c for c in ch if c.get("id")}
+    else:
+        state.setdefault("channels", {})
     counters = state.setdefault("counters", {})
     for prefix, default in {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0}.items():
         counters.setdefault(prefix, default)
@@ -313,6 +318,12 @@ class Broker:
         # ensure teams/invite_codes dicts exist (added in later versions)
         base.setdefault("teams", {})
         base.setdefault("invite_codes", {})
+        # channels: if persisted as a list (older shape), convert to id-keyed dict
+        ch = base.get("channels")
+        if isinstance(ch, list):
+            base["channels"] = {c.get("id", ""): c for c in ch if c.get("id")}
+        elif not isinstance(ch, dict):
+            base["channels"] = {}
         # honor the loaded source version for migration decisions
         base["schema_version"] = source_version
 
@@ -1425,6 +1436,7 @@ class Broker:
                 "approvals": self.state["approvals"],
                 "votes": self.state["votes"],
                 "audit": self.state["audit"][-200:],
+                "channels": self._channels_list(),
             })
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -1816,7 +1828,10 @@ class Broker:
         denied = self._check_rest_auth(request)
         if denied is not None:
             return denied
-        return self._json_response(self.state)
+        # state["channels"] is a dict internally; expose as list for consumers.
+        out = dict(self.state)
+        out["channels"] = self._channels_list()
+        return self._json_response(out)
 
     async def http_send(self, request):
         denied = self._check_rest_auth(request)
@@ -1899,11 +1914,24 @@ class Broker:
         return self._json_response({"ok": True, "message": entry})
 
     # ---- channels (server-side groups) -------------------------------------
+    # State shape: state["channels"] = { "ch_xxxxxxxx": {id, name, members, created_at}, ... }
+    # API responses return a list for consumer convenience.
+    def _channels_list(self):
+        return list(self.state.get("channels", {}).values())
+
+    def _new_channel_id(self):
+        # "ch_" + 8 alphanumeric chars (lowercase + digits)
+        alphabet = string.ascii_lowercase + string.digits
+        while True:
+            cid = "ch_" + "".join(random.choices(alphabet, k=8))
+            if cid not in self.state.get("channels", {}):
+                return cid
+
     async def http_channels_list(self, request):
         denied = self._check_rest_auth(request)
         if denied is not None:
             return denied
-        return self._json_response({"channels": self.state.get("channels", [])})
+        return self._json_response({"channels": self._channels_list()})
 
     async def http_channels_create(self, request):
         denied = self._check_rest_auth(request)
@@ -1913,23 +1941,28 @@ class Broker:
             body = await request.json()
         except Exception:
             return self._json_response({"error": "invalid json"}, status=400)
-        name = (body.get("name") or "").strip() or "untitled"
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._json_response({"error": "name required"}, status=400)
         members = body.get("members") or []
         if not isinstance(members, list):
             return self._json_response({"error": "members must be a list"}, status=400)
-        cid = "ch_" + str(int(time.time() * 1000)) + "_" + _generate_invite_code(4).lower()
+        members = [str(m).strip() for m in members if m]
+        if len(members) < 1:
+            return self._json_response({"error": "at least 1 member required"}, status=400)
+        cid = self._new_channel_id()
         channel = {
             "id": cid,
             "name": name,
-            "members": [str(m) for m in members if m],
+            "members": members,
             "created_at": now_iso(),
         }
         async with self.lock:
-            self.state.setdefault("channels", []).append(channel)
+            self.state.setdefault("channels", {})[cid] = channel
             self.audit("you", "channel_create",
-                       f"id={cid} name={name} members={len(channel['members'])}")
+                       f"id={cid} name={name} members={len(members)}")
             self.schedule_write()
-        await self.broadcast_ui({"type": "channels", "channels": self.state["channels"]})
+        await self.broadcast_ui({"type": "channels", "channels": self._channels_list()})
         return self._json_response({"ok": True, "channel": channel})
 
     async def http_channels_delete(self, request):
@@ -1938,15 +1971,12 @@ class Broker:
             return denied
         cid = request.match_info.get("cid", "")
         async with self.lock:
-            before = len(self.state.get("channels", []))
-            self.state["channels"] = [c for c in self.state.get("channels", [])
-                                      if c.get("id") != cid]
-            removed = before - len(self.state["channels"])
+            removed = self.state.get("channels", {}).pop(cid, None)
             if removed:
                 self.audit("you", "channel_delete", f"id={cid}")
                 self.schedule_write()
-        await self.broadcast_ui({"type": "channels", "channels": self.state["channels"]})
-        return self._json_response({"ok": True, "removed": removed})
+        await self.broadcast_ui({"type": "channels", "channels": self._channels_list()})
+        return self._json_response({"ok": True, "removed": 1 if removed else 0})
 
     async def http_channels_update(self, request):
         denied = self._check_rest_auth(request)
@@ -1958,24 +1988,22 @@ class Broker:
         except Exception:
             return self._json_response({"error": "invalid json"}, status=400)
         async with self.lock:
-            for c in self.state.get("channels", []):
-                if c.get("id") == cid:
-                    if "name" in body:
-                        c["name"] = (body["name"] or "").strip() or c.get("name", "")
-                    if "members" in body and isinstance(body["members"], list):
-                        c["members"] = [str(m) for m in body["members"] if m]
-                    self.audit("you", "channel_update", f"id={cid}")
-                    self.schedule_write()
-                    await self.broadcast_ui({"type": "channels",
-                                              "channels": self.state["channels"]})
-                    return self._json_response({"ok": True, "channel": c})
-        return self._json_response({"error": "channel not found"}, status=404)
+            c = self.state.get("channels", {}).get(cid)
+            if not c:
+                return self._json_response({"error": "channel not found"}, status=404)
+            if "name" in body:
+                new_name = (body["name"] or "").strip()
+                if new_name:
+                    c["name"] = new_name
+            if "members" in body and isinstance(body["members"], list):
+                c["members"] = [str(m).strip() for m in body["members"] if m]
+            self.audit("you", "channel_update", f"id={cid}")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "channels", "channels": self._channels_list()})
+        return self._json_response({"ok": True, "channel": c})
 
     def _find_channel(self, cid: str):
-        for c in self.state.get("channels", []):
-            if c.get("id") == cid:
-                return c
-        return None
+        return self.state.get("channels", {}).get(cid)
 
     async def http_plugins(self, request):
         out = []
