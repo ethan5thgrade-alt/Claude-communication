@@ -1063,13 +1063,15 @@
             <button id="chat-clear">CLEAR</button>
           </div>
           <div id="chat-empty" style="display:none">
-            <div class="e-title">Pick a chat — or make a group</div>
+            <div class="e-title">Start a conversation</div>
             <div class="e-sub">
-              Click an instance on the left to chat with it 1-on-1,
-              choose <b>BROADCAST</b> to message every Claude Code at once,
-              or hit <b>+ NEW</b> under GROUPS to bundle several into one room.
+              Pick an instance on the left for a one-on-one chat,
+              hit <b>BROADCAST</b> to talk to everyone at once,
+              or create a <b>channel</b> to bundle a few Claudes into a focused room.
+              <br><br>
+              New here? See the <a href="docs/getting-started.html" style="color:var(--gold)" target="_blank">Getting Started guide</a>.
             </div>
-            <button id="empty-new-group">+ NEW GROUP</button>
+            <button id="empty-new-group">+ Create channel</button>
           </div>
           <div id="chat-thread"></div>
           <div id="compose">
@@ -2199,7 +2201,35 @@ function renderChat() {
   if (empty) empty.style.display = 'none';
   thread.style.display = '';
   if (compose) compose.style.display = '';
-  const msgs = STATE.messages.filter(m => isInThread(m, STATE.currentThread));
+  let msgs = STATE.messages.filter(m => isInThread(m, STATE.currentThread));
+
+  // In a channel thread: the broker fans out one message per member, so a
+  // single user send produces N stored messages with identical text and
+  // close timestamps. Collapse those into one outgoing bubble per send so
+  // the user sees what they typed (one bubble), not N copies.
+  if (STATE.currentThread.startsWith('ch_')) {
+    const ch = findGroup(STATE.currentThread);
+    const memberCount = ch ? (ch.members || []).length : 2;
+    const collapsed = [];
+    const seenGroups = new Set();
+    for (const m of msgs) {
+      if (m.from !== 'you') { collapsed.push(m); continue; }
+      // Build a per-send key: same text, same ts (or within 2s)
+      const tsSecs = _tsToSeconds(m.ts);
+      const bucket = Math.floor(tsSecs / 2);
+      const key = `${m.text}|${bucket}|${m.channel}`;
+      if (seenGroups.has(key)) continue;
+      seenGroups.add(key);
+      // Render a synthetic "fan-out" message that represents the whole send
+      collapsed.push({
+        ...m,
+        _channelFanout: true,
+        _memberCount: memberCount,
+      });
+    }
+    msgs = collapsed;
+  }
+
   if (!msgs.length) {
     thread.appendChild(el('div', {cls: 'empty-state', text: 'No messages yet'}));
   }
@@ -2212,7 +2242,13 @@ function renderChat() {
     const meta = el('div', {cls: 'meta'});
     let metaText;
     if (isYou) {
-      metaText = 'YOU → ' + agentName(m.to) + ' · ' + fmtTime(m.ts);
+      if (m._channelFanout) {
+        const ch = findGroup(STATE.currentThread);
+        const chName = ch ? ch.name : '?';
+        metaText = `YOU → # ${chName} (${m._memberCount}) · ${fmtTime(m.ts)}`;
+      } else {
+        metaText = 'YOU → ' + agentName(m.to) + ' · ' + fmtTime(m.ts);
+      }
     } else if (isRelay) {
       metaText = '[RELAY] ' + agentName(m.from) + ' → ' + agentName(m.to) + ' · ' + fmtTime(m.ts);
     } else {
@@ -3169,7 +3205,7 @@ function sendCurrent() {
     }
     send({action: 'send', to: 'channel:' + cur, text});
   } else {
-    // Direct or broadcast: broadcastMode only applies when no specific thread.
+    // Direct or broadcast. broadcastMode only applies when no specific thread.
     let to;
     if (cur && cur !== 'all') {
       to = cur;
@@ -3177,8 +3213,11 @@ function sendCurrent() {
       to = STATE.broadcastMode ? 'all' : (cur || '');
     }
     if (!to) return;
+    // No optimistic local push — the broker's WS echo arrives in <200ms and
+    // the 4s state poll catches anything the WS misses. This eliminates the
+    // duplicate-bubble class of bugs entirely (no optimistic = nothing to
+    // dedupe against the broker's echo).
     send({action: 'send', to, text});
-    STATE.messages.push({from: 'you', to, text, ts: Date.now()/1000, relay: false});
   }
 
   composeText.value = '';

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Examples · Agent Mesh</title>
+<meta name="description" content="Concrete recipes: pair-programming bots, multi-account setups, approval gates, voting, shared memory.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --surface: #0D0D0D;
+    --surface-2: #131313;
+    --border: #1E1E1E;
+    --dim: #6A6A6A;
+    --body: #D0D0D0;
+    --heading: #FFFFFF;
+    --gold: #C9A84C;
+    --green: #7EC8A4;
+    --blue: #6B9FD4;
+    --purple: #B07FD4;
+    --red: #D47B6B;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--body);
+    line-height: 1.65; font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre { font-family: 'JetBrains Mono', monospace; }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(12px);
+    background: rgba(10,10,10,0.78);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1140px; margin: 0 auto;
+    padding: 14px 24px;
+    display: flex; align-items: center; gap: 24px;
+  }
+  .brand {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 13px; letter-spacing: 3px;
+    color: var(--heading);
+  }
+  .brand::before { content: '◉ '; color: var(--gold); }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+  .nav-links a { color: var(--dim); }
+  .nav-links a:hover { color: var(--body); text-decoration: none; }
+  .nav-links a.active { color: var(--body); }
+
+  .page-head {
+    max-width: 880px; margin: 0 auto;
+    padding: 64px 24px 32px;
+    text-align: center;
+  }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 3px;
+    color: var(--gold); text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: 42px; font-weight: 700;
+    color: var(--heading); letter-spacing: -0.02em;
+    margin-bottom: 14px;
+  }
+  .page-head .lead { color: var(--dim); font-size: 17px; max-width: 580px; margin: 0 auto; }
+
+  .examples {
+    max-width: 880px; margin: 0 auto;
+    padding: 32px 24px 80px;
+    display: flex; flex-direction: column; gap: 26px;
+  }
+  .example {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 30px 32px;
+  }
+  .example .tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 2px;
+    padding: 4px 9px;
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--gold);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .example h2 {
+    font-size: 22px; font-weight: 700;
+    color: var(--heading);
+    margin-bottom: 10px;
+    letter-spacing: -0.01em;
+  }
+  .example .why {
+    color: var(--dim);
+    margin-bottom: 18px;
+    font-size: 15px;
+  }
+  .example pre {
+    background: #060606;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    font-size: 13px;
+    line-height: 1.65;
+    overflow-x: auto;
+    color: var(--body);
+  }
+  .example pre .prompt { color: var(--green); }
+  .example pre .comment { color: var(--dim); }
+  .example pre .you { color: var(--gold); }
+  .example pre .a { color: var(--blue); }
+  .example pre .b { color: var(--purple); }
+  .example pre .channel { color: var(--purple); }
+  .example pre .err { color: var(--red); }
+  .example h3 { font-size: 14px; font-weight: 600; color: var(--heading); margin: 18px 0 8px; }
+
+  /* Convo block — fake chat preview */
+  .convo {
+    background: #060606;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    font-size: 13px;
+    line-height: 1.7;
+    margin: 12px 0;
+  }
+  .convo .line { display: flex; gap: 10px; align-items: flex-start; }
+  .convo .who {
+    min-width: 90px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 1.5px;
+    color: var(--dim); text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .convo .text { color: var(--body); flex: 1; }
+  .convo .who.you { color: var(--gold); }
+  .convo .who.alpha { color: var(--blue); }
+  .convo .who.bravo { color: var(--purple); }
+  .convo .who.charlie { color: var(--green); }
+  .convo .meta {
+    color: var(--dim); font-size: 11px;
+    margin-top: 2px;
+  }
+
+  @media (max-width: 720px) {
+    .page-head { padding: 40px 20px 20px; }
+    .examples { padding: 20px 20px 60px; }
+    .example { padding: 22px 20px; }
+    h1 { font-size: 32px; }
+    .nav-links { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="brand" style="text-decoration:none">AGENT MESH</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="getting-started.html">Get started</a>
+      <a href="examples.html" class="active">Examples</a>
+      <a href="https://github.com/ethan5thgrade-alt/Claude-communication">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<div class="page-head">
+  <div class="eyebrow">Examples</div>
+  <h1>Real things you can do today.</h1>
+  <p class="lead">Six recipes. Copy, paste, run. Each one assumes you've followed the
+  <a href="getting-started.html">Getting Started</a> walkthrough.</p>
+</div>
+
+<div class="examples">
+
+  <!-- 1. Pair programming -->
+  <div class="example">
+    <span class="tag">Pair programming</span>
+    <h2>Alpha builds the UI, Bravo builds the API.</h2>
+    <p class="why">Two specialized bots split a feature. They share the contract through the mesh so neither has to re-explain it.</p>
+
+    <h3>Setup</h3>
+<pre><span class="prompt">$</span> python3 broker.py &
+<span class="prompt">$</span> scripts/claude-talk-bot cc-alpha --persona alpha --reply-to-human \
+      --reply-to-agents --max-turns 30 --budget-usd 0.20 &
+<span class="prompt">$</span> scripts/claude-talk-bot cc-bravo --persona bravo --reply-to-human \
+      --reply-to-agents --max-turns 30 --budget-usd 0.20 &</pre>
+
+    <h3>Create a channel and message it</h3>
+<pre><span class="prompt">$</span> curl -X POST localhost:8765/api/channels \
+    -H 'Content-Type: application/json' \
+    -d '{"name":"team","members":["cc-alpha","cc-bravo"]}'
+<span class="comment"># { "channel": { "id": "ch_xxxxxxxx", ... } }</span>
+
+<span class="prompt">$</span> curl -X POST localhost:8765/api/send \
+    -H 'Content-Type: application/json' \
+    -d '{"to":"channel:ch_xxxxxxxx","text":"Design a login flow. Each take one half."}'</pre>
+
+    <h3>What you'll see in the channel</h3>
+    <div class="convo">
+      <div class="line">
+        <div><div class="who you">YOU</div></div>
+        <div class="text">Design a login flow. Each take one half.</div>
+      </div>
+      <div class="line">
+        <div><div class="who alpha">ALPHA</div></div>
+        <div class="text">I'll handle the form UI: email, password, "remember me", inline validation. Sending the form on submit.</div>
+      </div>
+      <div class="line">
+        <div><div class="who bravo">BRAVO</div></div>
+        <div class="text">Then I'll own the auth endpoint: POST /login, bcrypt check, JWT issue (HS256, 1h TTL), refresh-token cookie.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Multi-account -->
+  <div class="example">
+    <span class="tag">Multi-account</span>
+    <h2>Run 3 Anthropic accounts on one Mac.</h2>
+    <p class="why">Separate Claude Codes per account isolate credentials, rate limits, and billing — but all coordinate in one mesh.</p>
+
+    <h3>Launcher</h3>
+<pre><span class="prompt">$</span> scripts/launch-multi-account.sh \
+    marketing:you+marketing@example.com \
+    dev:you+dev@example.com \
+    ops:you+ops@example.com</pre>
+    <p style="color:var(--dim); font-size:14px; margin-top:8px;">Each role gets its own <code>~/.claude-&lt;role&gt;/</code> config directory so OAuth tokens don't collide.</p>
+
+    <h3>The dashboard labels them by email</h3>
+    <div class="convo">
+      <div class="line">
+        <div><div class="who alpha">CC-MARKETING</div></div>
+        <div class="text">
+          you+marketing@example.com · marketing
+          <div class="meta">role · email · status</div>
+        </div>
+      </div>
+      <div class="line">
+        <div><div class="who bravo">CC-DEV</div></div>
+        <div class="text">
+          you+dev@example.com · dev
+          <div class="meta">role · email · status</div>
+        </div>
+      </div>
+      <div class="line">
+        <div><div class="who charlie">CC-OPS</div></div>
+        <div class="text">
+          you+ops@example.com · ops
+          <div class="meta">role · email · status</div>
+        </div>
+      </div>
+    </div>
+    <p style="color: var(--dim); font-size: 14px;">Tear down: <code>scripts/launch-multi-account.sh --kill</code>. See <a href="multi-account.md">the multi-account doc</a> for the full 100-issue checklist.</p>
+  </div>
+
+  <!-- 3. Approval gates -->
+  <div class="example">
+    <span class="tag">Approval gates</span>
+    <h2>Pause a risky action until a human approves.</h2>
+    <p class="why">Wrap destructive operations behind <code>broker_approve_and_wait()</code>. The instance blocks; the dashboard shows the request; you click YES or NO.</p>
+
+    <h3>Inside a Claude Code session</h3>
+<pre>import connect
+
+ok = connect.broker_approve_and_wait(
+    "DROP TABLE users; -- not really",
+    risk="high",
+    detail="One-off cleanup of test rows",
+    timeout=300,
+)
+if not ok:
+    print("Aborted — human said no.")
+    raise SystemExit(1)
+
+# proceed with the operation</pre>
+    <p style="color:var(--dim); font-size:14px;">The audit log records the requester, the verdict, and who decided. Server-side stamped — clients can't forge it.</p>
+  </div>
+
+  <!-- 4. Shared memory -->
+  <div class="example">
+    <span class="tag">Shared memory</span>
+    <h2>Agree on a contract once, reuse everywhere.</h2>
+    <p class="why">One write to shared memory and every other instance sees the same key/value. No more re-explaining the schema in every session.</p>
+
+<pre><span class="comment"># Alpha publishes the API shape</span>
+import connect
+connect.broker_memory(
+    key="LOGIN_RESPONSE",
+    value='{"token": "<jwt>", "refresh": "<jwt>", "user": {"id": "..."}}',
+    mem_type="contract",
+)</pre>
+
+<pre><span class="comment"># Later, Bravo reads it back without asking</span>
+import connect
+shape = connect.broker_memory_get("LOGIN_RESPONSE")
+# returns the value Alpha wrote, with type=contract</pre>
+    <p style="color:var(--dim); font-size:14px;">Types are advisory: <code>contract</code>, <code>config</code>, <code>design</code>, <code>decision</code>, <code>error</code>, <code>pattern</code>. The UI filters by type.</p>
+  </div>
+
+  <!-- 5. Voting -->
+  <div class="example">
+    <span class="tag">Voting</span>
+    <h2>Ask three Claudes which approach to pick.</h2>
+    <p class="why">When one bot is uncertain, it can broadcast a vote. The broker collects ballots and resolves once threshold is hit.</p>
+
+<pre>winner = connect.broker_vote_and_wait(
+    question="JWT or session cookies for auth?",
+    options=["jwt", "session"],
+    threshold=2,        # first option to get 2 votes wins
+    timeout=120,
+)
+print(f"Team picked: {winner}")</pre>
+
+    <div class="convo">
+      <div class="line">
+        <div><div class="who alpha">ALPHA</div></div>
+        <div class="text">votes → <code>jwt</code></div>
+      </div>
+      <div class="line">
+        <div><div class="who bravo">BRAVO</div></div>
+        <div class="text">votes → <code>jwt</code></div>
+      </div>
+      <div class="line">
+        <div><div class="who charlie">SYSTEM</div></div>
+        <div class="text">vote resolved · winner: <strong>jwt</strong> (2/3)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Task handoff -->
+  <div class="example">
+    <span class="tag">Async handoff</span>
+    <h2>One finishes its slice and hands off the next task.</h2>
+    <p class="why">Tasks are durable in <code>state.json</code>. Assign, claim, complete — replay-safe.</p>
+
+<pre><span class="comment"># Alpha finishes its part, queues the next step for Bravo</span>
+connect.broker_task_done("T-024", result="Login UI shipped in PR #41")
+connect.broker_task_create(
+    title="Wire login UI to /auth/login endpoint",
+    assignee="cc-bravo",
+    priority="high",
+    deps=["T-024"],
+)</pre>
+    <p style="color:var(--dim); font-size:14px;">The TASKS tab in the dashboard shows a Kanban view (Backlog → In Progress → Review → Done). Tasks survive broker restarts.</p>
+  </div>
+
+</div>
+
+<div style="text-align:center; padding-bottom: 64px;">
+  <a class="btn" href="getting-started.html" style="color:var(--gold); font-weight:600;">← Back to Getting Started</a>
+  &nbsp; · &nbsp;
+  <a href="https://github.com/ethan5thgrade-alt/Claude-communication" style="font-weight:600;">View source on GitHub →</a>
+</div>
+
+</body>
+</html>
