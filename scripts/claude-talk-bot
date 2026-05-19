@@ -223,7 +223,9 @@ for m in window:
         t = datetime.datetime.fromisoformat(ts.replace("Z","+00:00")).strftime("%H:%M")
     except Exception:
         t = "??:??"
-    lines.append(f"[{t}] {display(m.get(\"from\",\"\"))}: {m.get(\"text\",\"\")}")
+    who = display(m.get("from", ""))
+    txt = m.get("text", "")
+    lines.append("[" + t + "] " + who + ": " + txt)
 
 print("STOP" if should_stop else "GO")
 print("\n".join(lines))
