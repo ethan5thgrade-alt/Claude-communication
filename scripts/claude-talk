@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# claude-talk — make different Claude Code sessions talk to each other.
+#
+# Workflow:
+#   In Claude Code session A (the first window):
+#     ! claude-talk start cc1 "Claude A"
+#   In Claude Code session B (a second window):
+#     ! claude-talk start cc2 "Claude B"
+#   From either:
+#     ! claude-talk send cc2 "hi from cc1"
+#     ! claude-talk inbox
+#
+# Each session registers a distinct instance id. Messages flow through the
+# local broker (auto-started on first use).
+
+set -euo pipefail
+
+REPO="${AGENT_MESH_REPO:-$HOME/agent-mesh}"
+BROKER_PID_FILE="$HOME/.agent-mesh-broker.pid"
+INBOX_DIR="$HOME/.agent-mesh-inbox"
+PYTHON_BIN="${PYTHON_BIN:-python3.13}"
+BROKER_HOST="${MESH_HOST:-localhost}"
+BROKER_PORT="${MESH_UI_PORT:-8765}"
+BASE="http://${BROKER_HOST}:${BROKER_PORT}"
+
+cmd="${1:-help}"; shift || true
+
+_broker_running() {
+    curl -sf "${BASE}/api/health" >/dev/null 2>&1
+}
+
+_start_broker() {
+    if _broker_running; then return 0; fi
+    echo "[claude-talk] starting broker..." >&2
+    mkdir -p "$INBOX_DIR"
+    # Launch detached, write pid file. stderr goes to a log so we can debug.
+    nohup "$PYTHON_BIN" -u "$REPO/broker.py" \
+        >"$HOME/.agent-mesh-broker.log" 2>&1 &
+    echo $! > "$BROKER_PID_FILE"
+    # Wait up to 10s for it to come up
+    for _ in $(seq 1 50); do
+        if _broker_running; then return 0; fi
+        sleep 0.2
+    done
+    echo "[claude-talk] broker did not come online — see $HOME/.agent-mesh-broker.log" >&2
+    return 1
+}
+
+case "$cmd" in
+    start)
+        # claude-talk start <instance_id> [name]
+        instance_id="${1:?usage: claude-talk start <instance_id> [name]}"
+        name="${2:-$instance_id}"
+        _start_broker
+        mkdir -p "$INBOX_DIR"
+        # Persist this session's id so subsequent send/inbox calls know who we are
+        echo "$instance_id" > "$INBOX_DIR/.me"
+        # Spawn connect.py in the background so we receive messages.
+        # Kill any prior listener for this instance to avoid double-registration.
+        if [ -f "$INBOX_DIR/${instance_id}.pid" ]; then
+            kill "$(cat "$INBOX_DIR/${instance_id}.pid")" 2>/dev/null || true
+            sleep 0.2
+        fi
+        # The listener appends every incoming message to the inbox file.
+        nohup env \
+            INSTANCE_ID="$instance_id" \
+            INSTANCE_NAME="$name" \
+            INSTANCE_PROJECT="${INSTANCE_PROJECT:-claude-code}" \
+            BROKER_URL="ws://localhost:${MESH_INST_PORT:-8766}" \
+            "$PYTHON_BIN" -u "$REPO/connect.py" \
+            >"$INBOX_DIR/${instance_id}.log" 2>&1 &
+        echo $! > "$INBOX_DIR/${instance_id}.pid"
+        sleep 0.6
+        echo "[claude-talk] registered as ${instance_id} (\"${name}\"). Inbox: $INBOX_DIR/${instance_id}.log"
+        ;;
+
+    send)
+        # claude-talk send <to> <msg...> — sends FROM whatever this session
+        # registered as via `start`. Falls back to "you" if nothing registered.
+        to="${1:?usage: claude-talk send <to> <message>}"; shift
+        msg="$*"
+        sender="$(cat "$INBOX_DIR/.me" 2>/dev/null || echo "you")"
+        _start_broker
+        body="$(printf '{"to":"%s","text":"%s","from":"%s"}' \
+                "$to" "$(printf '%s' "$msg" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read())[1:-1])')" "$sender")"
+        curl -sf -X POST "${BASE}/api/send" \
+            -H 'Content-Type: application/json' \
+            ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+            -d "$body" | python3 -m json.tool
+        ;;
+
+    inbox)
+        # claude-talk inbox [count]   — last N messages addressed to this session
+        n="${1:-20}"
+        me="$(cat "$INBOX_DIR/.me" 2>/dev/null || echo "")"
+        if [ -z "$me" ]; then
+            echo "no instance registered — run 'claude-talk start <id>' first" >&2
+            exit 1
+        fi
+        curl -sf "${BASE}/api/status" \
+            ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+        | python3 -c "
+import json, sys
+me = '$me'
+limit = $n
+data = json.load(sys.stdin)
+msgs = [m for m in data.get('messages', []) if m.get('to') in (me, 'all')][-limit:]
+for m in msgs:
+    print(f\"[{m.get('ts','')}] {m.get('from','?')} → {m.get('to','?')}: {m.get('text','')}\")
+"
+        ;;
+
+    listen)
+        # claude-talk listen   — tail this session's incoming log
+        me="$(cat "$INBOX_DIR/.me" 2>/dev/null || echo "")"
+        if [ -z "$me" ]; then
+            echo "no instance registered — run 'claude-talk start <id>' first" >&2
+            exit 1
+        fi
+        tail -F "$INBOX_DIR/${me}.log"
+        ;;
+
+    who)
+        me="$(cat "$INBOX_DIR/.me" 2>/dev/null || echo "(not registered)")"
+        echo "I am: $me"
+        if _broker_running; then
+            echo "Broker: $BASE (running)"
+            curl -sf "${BASE}/api/instances" \
+                ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+                | python3 -m json.tool
+        else
+            echo "Broker: $BASE (not running)"
+        fi
+        ;;
+
+    stop)
+        # claude-talk stop   — unregister this session (keep broker alive)
+        me="$(cat "$INBOX_DIR/.me" 2>/dev/null || echo "")"
+        if [ -n "$me" ] && [ -f "$INBOX_DIR/${me}.pid" ]; then
+            kill "$(cat "$INBOX_DIR/${me}.pid")" 2>/dev/null || true
+            rm -f "$INBOX_DIR/${me}.pid"
+            echo "[claude-talk] stopped instance $me"
+        fi
+        rm -f "$INBOX_DIR/.me"
+        ;;
+
+    stop-broker)
+        if [ -f "$BROKER_PID_FILE" ]; then
+            kill "$(cat "$BROKER_PID_FILE")" 2>/dev/null || true
+            rm -f "$BROKER_PID_FILE"
+            echo "[claude-talk] broker stopped"
+        else
+            echo "[claude-talk] no broker pid file"
+        fi
+        ;;
+
+    help|--help|-h|*)
+        cat <<EOF
+claude-talk — let different Claude Code sessions talk through the local broker.
+
+Usage:
+  claude-talk start <id> [name]   register this session as <id> (auto-starts broker)
+  claude-talk send <to> <msg...>  send a message FROM this session TO <to>
+  claude-talk inbox [N]           show last N messages addressed to me (default 20)
+  claude-talk listen              tail my live message log
+  claude-talk who                 show my id + list connected instances
+  claude-talk stop                unregister this session
+  claude-talk stop-broker         shut down the broker
+
+Typical two-window flow:
+  # In Claude Code window A:
+  ! claude-talk start cc1 "Claude A"
+  ! claude-talk send cc2 "hi from A"
+  ! claude-talk inbox
+
+  # In Claude Code window B:
+  ! claude-talk start cc2 "Claude B"
+  ! claude-talk inbox
+  ! claude-talk send cc1 "hi back"
+
+State:
+  Broker URL:       $BASE
+  Inbox dir:        $INBOX_DIR
+  Broker pid file:  $BROKER_PID_FILE
+EOF
+        ;;
+esac

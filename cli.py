@@ -67,7 +67,7 @@ def _post(path: str, body: dict):
 
 USAGE = """\
 Usage:
-  python cli.py send <to> "<text>"
+  python cli.py send <to> "<text>" [--from <sender>]   # sender defaults to $INSTANCE_ID or "you"
   python cli.py status
   python cli.py state
   python cli.py clear
@@ -173,9 +173,21 @@ def main(argv):
         if len(argv) < 4:
             print(USAGE)
             return 1
-        to = argv[2]
-        text = argv[3]
-        _pp(_post("/api/send", {"to": to, "text": text}))
+        # `cli.py send <to> "<text>" [--from <sender>]`
+        # If --from is omitted but $INSTANCE_ID is set in env, use that as
+        # the sender — lets a Claude Code session do `cli.py send cc2 "hi"`
+        # and have the message attributed to cc1 (this session) instead of "you".
+        pos, flags = _parse_flags(argv[2:], {"from"})
+        if len(pos) < 2:
+            print(USAGE)
+            return 1
+        to = pos[0]
+        text = pos[1]
+        sender = flags.get("from") or os.environ.get("INSTANCE_ID") or "you"
+        body = {"to": to, "text": text}
+        if sender and sender != "you":
+            body["from"] = sender
+        _pp(_post("/api/send", body))
     elif cmd == "status":
         _pp(_get("/api/status"))
     elif cmd == "state":

@@ -18,9 +18,12 @@ from typing import Any, Optional
 import websockets
 
 # ---------------- defaults ----------------
-INSTANCE_ID = "cc1"
-NAME = "Claude 1"
-PROJECT = "OPTFINDER"
+# Each Claude Code session should set INSTANCE_ID (and ideally NAME) before
+# starting connect.py so they register as distinct peers. Env vars win over
+# the hardcoded defaults; the constants here are only used when nothing is set.
+INSTANCE_ID = os.environ.get("INSTANCE_ID") or "cc1"
+NAME = os.environ.get("INSTANCE_NAME") or os.environ.get("NAME") or "Claude 1"
+PROJECT = os.environ.get("INSTANCE_PROJECT") or os.environ.get("PROJECT") or "OPTFINDER"
 # BROKER_URL: prefer env var. Falls through to localhost; if localhost fails on
 # the first attempt and the env var was NOT set, we'll mDNS-browse for a LAN
 # broker (see _discover_broker_url).
@@ -703,4 +706,15 @@ if __name__ == "__main__":
     # ensure loop is up
     _start_loop()
     time.sleep(0.5)
-    _interactive()
+    # If stdin isn't a TTY (nohup, daemon, piped) skip the interactive REPL
+    # — otherwise input() hits EOF immediately, _interactive() returns, the
+    # main thread exits, and the daemon WS-loop thread dies with it.
+    if sys.stdin.isatty():
+        _interactive()
+    else:
+        # Keep the main thread alive so the daemon loop stays connected.
+        try:
+            while True:
+                time.sleep(60)
+        except KeyboardInterrupt:
+            pass

@@ -1698,19 +1698,28 @@ class Broker:
         text = (body.get("text") or "").strip()
         if not text:
             return web.json_response({"error": "empty text"}, status=400)
+        # Optional "from" — defaults to "you" (human). Allows a Claude Code
+        # instance to send a one-shot REST message as itself (cc1 → cc2).
+        sender = (body.get("from") or "you").strip() or "you"
         entry = {
             "id": f"msg-{len(self.state['messages']) + 1}",
-            "from": "you",
+            "from": sender,
             "to": to,
             "text": text,
             "ts": now_iso(),
         }
         async with self.lock:
             self.state["messages"].append(entry)
-            self.audit("you", "message", f"to={to} (REST)")
+            self.audit(sender, "message", f"to={to} (REST)")
             self.schedule_write()
+        # Relay routing: anyone-to-all broadcasts; anyone-to-instance routes
+        # to that instance and (if sender isn't "you") also notifies the UI.
         if to == "all":
-            await self.broadcast_instances({"type": "message", **entry})
+            await self.broadcast_instances({"type": "message", **entry},
+                                           exclude=sender if sender != "you" else None)
+        elif to == "you":
+            # purely UI delivery — broadcast_ui below handles it
+            pass
         else:
             await self.send_to_instance(to, {"type": "message", **entry})
         await self.broadcast_ui({"type": "message", "message": entry})
