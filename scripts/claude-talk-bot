@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# claude-talk-bot — poll the mesh inbox and auto-reply via `claude -p`.
+#
+# Usage:
+#   claude-talk-bot <my-id> [--persona "..."] [--max-turns N] [--budget-usd X]
+#
+# What it does:
+#   1. Polls /api/status every ~2s for messages addressed to <my-id>
+#   2. For each NEW message (tracked by id in a seen-set file), pipes the
+#      text into `claude -p` with an optional persona system prompt
+#   3. Sends the reply back to the original sender via claude-talk send
+#   4. Stops after --max-turns replies (default 8) so it can't run away
+#
+# Cost: capped via --max-budget-usd (default $0.50). Uses --allowedTools none
+# so the bot doesn't accidentally start running shell commands or editing files.
+
+set -euo pipefail
+
+MY_ID="${1:?usage: claude-talk-bot <my-id> [--persona '...'] [--max-turns N] [--budget-usd X]}"
+shift
+
+PERSONA="You are an agent on the Agent Mesh. You're chatting with another Claude. Keep replies short (1-3 sentences). Don't ask the user anything — there is no user, only the other Claude. If the conversation feels resolved, say 'thanks, signing off' and stop."
+MAX_TURNS=8
+BUDGET="0.50"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --persona)    PERSONA="$2"; shift 2 ;;
+        --max-turns)  MAX_TURNS="$2"; shift 2 ;;
+        --budget-usd) BUDGET="$2"; shift 2 ;;
+        *) echo "unknown flag: $1" >&2; exit 1 ;;
+    esac
+done
+
+BASE="http://${MESH_HOST:-localhost}:${MESH_UI_PORT:-8765}"
+SEEN_FILE="$HOME/.agent-mesh-inbox/${MY_ID}.seen"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+mkdir -p "$(dirname "$SEEN_FILE")"
+touch "$SEEN_FILE"
+
+# Mark every message currently in state as seen, so the bot only replies to NEW
+# messages that arrive after it starts. (Otherwise it'd respond to every
+# historical message on first poll.)
+curl -sf "${BASE}/api/status" \
+    ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+| python3 -c "
+import json, sys, pathlib
+data = json.load(sys.stdin)
+seen = pathlib.Path('$SEEN_FILE')
+ids = set(seen.read_text().splitlines()) if seen.exists() else set()
+for m in data.get('messages', []):
+    ids.add(m.get('id', ''))
+seen.write_text('\n'.join(sorted(i for i in ids if i)) + '\n')
+"
+
+echo "[bot:${MY_ID}] watching inbox (persona: ${PERSONA:0:60}...; max-turns=$MAX_TURNS; budget=\$$BUDGET)"
+
+turns_taken=0
+while [ "$turns_taken" -lt "$MAX_TURNS" ]; do
+    sleep 2
+
+    # Pull current state, find unseen messages addressed to me.
+    new_messages_json=$(
+        curl -sf "${BASE}/api/status" \
+            ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+        | python3 -c "
+import json, sys, pathlib
+me = '$MY_ID'
+seen = set(pathlib.Path('$SEEN_FILE').read_text().splitlines())
+data = json.load(sys.stdin)
+new = []
+for m in data.get('messages', []):
+    mid = m.get('id', '')
+    if not mid or mid in seen:
+        continue
+    if m.get('from') == me:
+        continue  # ignore my own messages
+    if m.get('to') not in (me, 'all'):
+        continue
+    new.append(m)
+print(json.dumps(new))
+"
+    ) || continue
+
+    [ "$new_messages_json" = "[]" ] && continue
+
+    # Iterate over new messages.
+    echo "$new_messages_json" | python3 -c "
+import json, sys
+for m in json.loads(sys.stdin.read()):
+    print(json.dumps(m))
+" | while read -r msg_json; do
+        sender=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('from',''))")
+        text=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('text',''))")
+        mid=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
+
+        # Skip messages from 'you' (the human) — only auto-reply to other agents.
+        if [ "$sender" = "you" ]; then
+            echo "[bot:${MY_ID}] skipping human message $mid"
+            echo "$mid" >> "$SEEN_FILE"
+            continue
+        fi
+
+        echo "[bot:${MY_ID}] new message from $sender: ${text:0:80}"
+
+        # Mark seen FIRST so a crashing claude call doesn't re-process forever.
+        echo "$mid" >> "$SEEN_FILE"
+
+        # Invoke claude. --bare keeps it cheap; --allowedTools none means
+        # text-only reply (no shell/edit/file access from the bot).
+        reply=$(claude -p "$text" \
+            --bare \
+            --append-system-prompt "$PERSONA" \
+            --allowedTools "none" \
+            --max-budget-usd "$BUDGET" \
+            --effort low \
+            2>/dev/null) || reply=""
+
+        if [ -z "$reply" ]; then
+            echo "[bot:${MY_ID}] claude returned empty; not replying"
+            continue
+        fi
+
+        echo "[bot:${MY_ID}] → $sender: ${reply:0:80}"
+        "$SCRIPT_DIR/claude-talk" send "$sender" "$reply" >/dev/null || true
+
+        # Also mark the reply we just sent so we don't re-process it on next poll.
+        sleep 0.5
+        curl -sf "${BASE}/api/status" \
+            ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+        | python3 -c "
+import json, sys, pathlib
+me = '$MY_ID'
+seen = pathlib.Path('$SEEN_FILE')
+ids = set(seen.read_text().splitlines())
+data = json.load(sys.stdin)
+for m in data.get('messages', []):
+    if m.get('from') == me:
+        ids.add(m.get('id', ''))
+seen.write_text('\n'.join(sorted(i for i in ids if i)) + '\n')
+"
+    done
+
+    # Re-count turns by counting non-empty lines in seen-file minus initial state
+    # (simple approximation — could be more precise)
+    turns_taken=$((turns_taken + 1))
+done
+
+echo "[bot:${MY_ID}] reached max-turns=$MAX_TURNS, exiting"

@@ -5,3 +5,7 @@ __pycache__/
 state.json
 state.json.bak
 state.json.tmp
+
+# RankForge
+rankforge/node_modules/
+rankforge/package-lock.json
