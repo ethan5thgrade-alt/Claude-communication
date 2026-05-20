@@ -1,8 +1,9 @@
-# RankForge — Groups 1, 2 & 3
+# RankForge — Groups 1, 2, 3 & 4 (partial)
 
-A working TypeScript implementation of agents **001–038** of the 300-agent
-RankForge SEO automation system (full spec in
-[../docs/rankforge/](../docs/rankforge/)).
+A working TypeScript implementation of agents **001–049** of the 300-agent
+RankForge SEO automation system (Group 4 is partial: 11 of its 22 agents
+shipped — 039-049 only). Full spec in
+[../docs/rankforge/](../docs/rankforge/).
 
 - **Group 1 (001–010)** — Grand Orchestration: orchestrator, state machine,
   quality gate, error classifier, priority arbitrator, dependency DAG,
@@ -16,8 +17,13 @@ RankForge SEO automation system (full spec in
   agent, competitor-gap finder, intent classifier, difficulty scorer,
   volume estimator, cluster builder, seasonal detector, trend spotter,
   voice optimizer, PAA miner, performance tracker.
+- **Group 4 (039–049, partial — 11 of 22)** — Content Creation Engine:
+  content strategy planner, master blog writer, how-to writer, listicle
+  writer, comparison writer, local landing page writer, FAQ article writer,
+  case study writer, press release writer, email writer, video script
+  writer. Agents 050-060 (product/category/glossary/news/etc.) still to come.
 
-The other 25 groups build on top.
+The other 24+ groups build on top.
 
 ## What's here
 
