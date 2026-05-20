@@ -143,6 +143,44 @@
     justify-content: center;
   }
   .h-tabs::-webkit-scrollbar { display: none; }
+  /* Online-count chip — sits next to the connection state in the header */
+  .online-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-left: 12px; padding: 4px 10px;
+    border: 1px solid var(--border); border-radius: 20px;
+    font-size: 9.5px; letter-spacing: 1.5px; color: var(--dim);
+  }
+  .ochip-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--dim);
+    box-shadow: 0 0 4px rgba(255,255,255,0.1);
+  }
+  .online-chip.has-online {
+    border-color: var(--gold); color: var(--gold);
+  }
+  .online-chip.has-online .ochip-dot {
+    background: #4ade80;
+    box-shadow: 0 0 6px rgba(74,222,128,0.7);
+  }
+  /* INVITE tab gets a subtle highlight to draw new users' eye */
+  .tab-btn.invite-cta {
+    color: var(--gold);
+  }
+  .tab-btn.invite-cta::before {
+    content: ''; display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--gold); margin-right: 6px;
+    vertical-align: middle;
+  }
+  /* Advanced-tabs toggle + the hide/show behaviour */
+  .tab-btn.adv-toggle {
+    padding: 14px 10px; color: var(--dim); font-size: 13px;
+    letter-spacing: 0;
+  }
+  .tab-btn.adv-toggle:hover { color: var(--body); }
+  /* When body lacks .show-adv, advanced tabs collapse out */
+  body:not(.show-adv) .tab-btn.adv-tab { display: none; }
+  body.show-adv .tab-btn.adv-toggle { color: var(--gold); }
   .tab-btn {
     border: none; border-bottom: 2px solid transparent;
     padding: 14px 14px; background: transparent;
@@ -1072,15 +1110,25 @@
       <div class="h-title">AGENT MESH</div>
       <div class="conn-dot" id="conn-dot"></div>
       <div class="conn-state" id="conn-state">CONNECTING…</div>
+      <!-- live online-count chip; tells a new user at a glance whether anything is here yet -->
+      <div id="online-chip" class="online-chip" title="Claudes currently online">
+        <span id="online-chip-dot" class="ochip-dot"></span>
+        <span id="online-chip-text">0 ONLINE</span>
+      </div>
     </div>
     <div class="h-tabs">
+      <!-- Primary tabs (always shown). INVITE moved up from CONNECT so new
+           users see how to bring in a friend BEFORE the advanced surface. -->
       <button class="tab-btn active" data-tab="chat">CHAT<span class="tab-badge" id="badge-chat" style="display:none"></span></button>
+      <button class="tab-btn invite-cta" data-tab="connect">+ INVITE<span class="tab-badge" id="badge-connect" style="display:none"></span></button>
       <button class="tab-btn" data-tab="tasks">TASKS<span class="tab-badge" id="badge-tasks" style="display:none"></span></button>
-      <button class="tab-btn" data-tab="flows">FLOWS<span class="tab-badge" id="badge-flows" style="display:none"></span></button>
       <button class="tab-btn" data-tab="memory">MEMORY<span class="tab-badge" id="badge-memory" style="display:none"></span></button>
-      <button class="tab-btn" data-tab="plugins">PLUGINS<span class="tab-badge" id="badge-plugins" style="display:none"></span></button>
-      <button class="tab-btn" data-tab="connect">CONNECT<span class="tab-badge" id="badge-connect" style="display:none"></span></button>
-      <button class="tab-btn" data-tab="control">CONTROL<span class="tab-badge" id="badge-control" style="display:none"></span></button>
+      <!-- Advanced tabs hidden by default; revealed by the ··· toggle below.
+           Choice persists in localStorage so power users opt in once. -->
+      <button class="tab-btn adv-tab" data-tab="flows">FLOWS<span class="tab-badge" id="badge-flows" style="display:none"></span></button>
+      <button class="tab-btn adv-tab" data-tab="plugins">PLUGINS<span class="tab-badge" id="badge-plugins" style="display:none"></span></button>
+      <button class="tab-btn adv-tab" data-tab="control">CONTROL<span class="tab-badge" id="badge-control" style="display:none"></span></button>
+      <button class="tab-btn adv-toggle" id="adv-toggle" title="Show/hide advanced tabs">···</button>
     </div>
     <div class="h-right">
       <button class="h-action" id="btn-theme" title="Toggle dark/light theme" aria-label="Toggle theme">&#x263E;<span class="lbl" id="theme-lbl"> DARK</span></button>
@@ -1879,7 +1927,20 @@ function renderTabBadges() {
 }
 
 // ---------- SIDEBAR ----------
+function renderOnlineChip() {
+  // Online-count chip in the header. Lights up gold when ≥1 Claude is online.
+  // Doubles as the empty-state cue: new users see "0 ONLINE" and know they
+  // need to do something (the highlighted +INVITE tab tells them what).
+  const chip = $('online-chip');
+  const text = $('online-chip-text');
+  if (!chip || !text) return;
+  const n = (STATE.instances || []).filter(i => i.online).length;
+  text.textContent = n + ' ONLINE';
+  chip.classList.toggle('has-online', n > 0);
+}
+
 function renderSidebar() {
+  renderOnlineChip();
   const root = $('sb-instances');
   clear(root);
   if (!STATE.instances.length) {
@@ -2989,8 +3050,22 @@ function switchCTab(tab) {
 }
 
 function wire() {
-  // Tab buttons
+  // Advanced-tabs hide/show. Persist in localStorage so power users opt in
+  // once and don't have to click ··· on every page load.
+  if (localStorage.getItem('am.showAdv') === '1') {
+    document.body.classList.add('show-adv');
+  }
+  const advBtn = $('adv-toggle');
+  if (advBtn) {
+    advBtn.addEventListener('click', () => {
+      const showing = document.body.classList.toggle('show-adv');
+      localStorage.setItem('am.showAdv', showing ? '1' : '0');
+    });
+  }
+
+  // Tab buttons (skip the ··· toggle — it's not a tab)
   document.querySelectorAll('.tab-btn').forEach(b => {
+    if (b.classList.contains('adv-toggle')) return;
     b.addEventListener('click', () => switchTab(b.dataset.tab));
   });
   document.querySelectorAll('.ctl-tab-btn').forEach(b => {
