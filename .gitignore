@@ -6,6 +6,9 @@ state.json
 state.json.bak
 state.json.tmp
 
+# Ephemeral worktree state from Claude Code subagents — never commit
+.claude/worktrees/
+
 # RankForge
 rankforge/node_modules/
 rankforge/package-lock.json
