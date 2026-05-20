@@ -17,6 +17,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import random
+import string
+
 import aiohttp
 import websockets
 from aiohttp import web, WSMsgType, ClientTimeout
@@ -34,6 +37,11 @@ INSTANCE_PORT = 8766
 CURRENT_SCHEMA_VERSION = 2
 DEFAULT_BACKUP_INTERVAL_SECONDS = 86400  # 24h
 MAX_DATED_BACKUPS = 7
+# Pruning caps. Daily backups in state.json.YYYY-MM-DD.bak preserve full
+# history; in-memory state stays bounded so /api/state and JSON writes
+# stay snappy. Triggered only when length exceeds 1.5x the cap.
+MAX_MESSAGES_IN_STATE = 2000
+MAX_AUDIT_IN_STATE = 1000
 # mDNS / Zeroconf service type for agent-mesh broker advertisement.
 MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 DEFAULT_PLUGINS_DIR = Path.home() / ".claude" / "plugins" / "cache"
@@ -106,14 +114,31 @@ def empty_state() -> dict:
         "approvals": [],
         "votes": [],
         "audit": [],
-        "instances_meta": {},  # persisted per-instance metadata: role, paused
+        "instances_meta": {},  # persisted per-instance metadata: role, paused, room
         "counters": {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0, "PI": 0},
+        "teams": {},           # team_id -> {id, name, room, invite_code, created_at, members:[]}
+        "invite_codes": {},    # invite_code -> team_id
+        "channels": {},        # channel_id -> {id, name, members:[instance_id], created_at}
     }
+
+
+def _generate_invite_code(length: int = 8) -> str:
+    """Generate an 8-character alphanumeric invite code (uppercase)."""
+    chars = string.ascii_uppercase + string.digits
+    return "".join(random.choices(chars, k=length))
+
+DEFAULT_ROOM = "default"
 
 
 def _migrate_v1_to_v2(state: dict) -> dict:
     """v1 (no schema_version) -> v2: ensure instances_meta, counters, created_by on tasks."""
     state.setdefault("instances_meta", {})
+    # channels migration: if it was previously a list, convert to id-keyed dict
+    ch = state.get("channels")
+    if isinstance(ch, list):
+        state["channels"] = {c.get("id", ""): c for c in ch if c.get("id")}
+    else:
+        state.setdefault("channels", {})
     counters = state.setdefault("counters", {})
     for prefix, default in {"M": 0, "T": 0, "F": 0, "AP": 0, "V": 0, "A": 0}.items():
         counters.setdefault(prefix, default)
@@ -164,7 +189,7 @@ class Broker:
         self.state: dict = empty_state()
 
         # live connections
-        self.instances: dict[str, dict] = {}  # id -> {ws, name, project, status, workload, online, role, paused}
+        self.instances: dict[str, dict] = {}  # id -> {ws, name, project, status, workload, online, role, paused, room}
         self.ui_clients: set[web.WebSocketResponse] = set()
 
         # broker-side awaitable approvals: ap_id -> Future[bool]
@@ -209,8 +234,8 @@ class Broker:
             sha = result.stdout.strip()
             if result.returncode == 0 and sha:
                 return sha
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         return "unknown"
 
     def uptime_seconds(self) -> float:
@@ -277,8 +302,8 @@ class Broker:
             log.warning(f"Corrupt state.json ({e}); backing up and starting fresh")
             try:
                 shutil.copy(self.state_path, self.state_path.with_suffix(".json.bak"))
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("silently swallowed exception: %r", e)
             self.state = empty_state()
             return
 
@@ -295,6 +320,15 @@ class Broker:
         # ensure counters dict has all known prefixes
         for k, v in empty_state()["counters"].items():
             base["counters"].setdefault(k, v)
+        # ensure teams/invite_codes dicts exist (added in later versions)
+        base.setdefault("teams", {})
+        base.setdefault("invite_codes", {})
+        # channels: if persisted as a list (older shape), convert to id-keyed dict
+        ch = base.get("channels")
+        if isinstance(ch, list):
+            base["channels"] = {c.get("id", ""): c for c in ch if c.get("id")}
+        elif not isinstance(ch, dict):
+            base["channels"] = {}
         # honor the loaded source version for migration decisions
         base["schema_version"] = source_version
 
@@ -316,9 +350,22 @@ class Broker:
             # persist post-migration state on next opportunity
             self.schedule_write()
 
+    def _prune_state_inplace(self):
+        """Trim noisy lists down to their caps so state.json stays bounded.
+        Daily backups preserve full history, so this is non-destructive in
+        practice. Only acts when a list exceeds 1.5x its cap, to avoid
+        churning on every write."""
+        msgs = self.state.get("messages", [])
+        if len(msgs) > int(MAX_MESSAGES_IN_STATE * 1.5):
+            self.state["messages"] = msgs[-MAX_MESSAGES_IN_STATE:]
+        audit = self.state.get("audit", [])
+        if len(audit) > int(MAX_AUDIT_IN_STATE * 1.5):
+            self.state["audit"] = audit[-MAX_AUDIT_IN_STATE:]
+
     async def _do_write(self):
         await asyncio.sleep(0.5)
         try:
+            self._prune_state_inplace()
             tmp = self.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
                 json.dump(self.state, f, indent=2, default=str)
@@ -390,8 +437,8 @@ class Broker:
                 self.audit("system", "backup_pruned",
                            ", ".join(p.name for p in deleted))
                 self.schedule_write()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("silently swallowed exception: %r", e)
         return deleted
 
     async def _backup_loop(self):
@@ -459,44 +506,62 @@ class Broker:
             info["online"] = False
             return False
 
-    async def broadcast_instances(self, payload: dict, exclude: Optional[str] = None):
+    async def broadcast_instances(self, payload: dict, exclude: Optional[str] = None,
+                                   room: Optional[str] = None):
+        """Broadcast to all instances, optionally filtered by room."""
         for iid, info in list(self.instances.items()):
             if iid == exclude:
+                continue
+            if room is not None and info.get("room", DEFAULT_ROOM) != room:
                 continue
             await self.send_to_instance(iid, payload)
 
     # ------------------- instances meta -------------------
-    def instances_snapshot(self) -> list[dict]:
+    def instances_snapshot(self, room: Optional[str] = None) -> list[dict]:
+        """Return a list of instance info dicts.
+
+        If `room` is provided, only return instances in that room.
+        """
         out = []
         seen = set()
         for iid, info in self.instances.items():
+            inst_room = info.get("room", DEFAULT_ROOM)
+            if room is not None and inst_room != room:
+                continue
             seen.add(iid)
             meta = self.state["instances_meta"].get(iid, {})
             out.append({
                 "id": iid,
                 "name": info.get("name", iid),
                 "project": info.get("project", ""),
+                "email": info.get("email") or meta.get("email", ""),
                 "status": info.get("status", ""),
                 "task": info.get("task", ""),
                 "workload": info.get("workload", 0),
                 "online": info.get("online", False),
                 "role": meta.get("role", ""),
                 "paused": meta.get("paused", False),
+                "room": inst_room,
             })
         # include persisted-but-offline instances
         for iid, meta in self.state["instances_meta"].items():
             if iid in seen:
                 continue
+            inst_room = meta.get("room", DEFAULT_ROOM)
+            if room is not None and inst_room != room:
+                continue
             out.append({
                 "id": iid,
                 "name": meta.get("name", iid),
                 "project": meta.get("project", ""),
+                "email": meta.get("email", ""),
                 "status": "",
                 "task": "",
                 "workload": 0,
                 "online": False,
                 "role": meta.get("role", ""),
                 "paused": meta.get("paused", False),
+                "room": inst_room,
             })
         return out
 
@@ -884,67 +949,81 @@ class Broker:
                                 "type": "auth_failed",
                                 "reason": "bad token",
                             }))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
                         try:
                             await ws.close()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
                         return
                     instance_id = msg.get("id")
                     if not instance_id:
                         continue
                     name = msg.get("name", instance_id)
                     project = msg.get("project", "")
+                    email = (msg.get("email") or "").strip()
+                    role_in = (msg.get("role") or "").strip()
+                    room = (msg.get("room") or DEFAULT_ROOM).strip() or DEFAULT_ROOM
 
                     async with self.lock:
                         existing = self.instances.get(instance_id)
                         if existing and existing.get("ws") is not ws:
                             try:
                                 await existing["ws"].close()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug("silently swallowed exception: %r", e)
 
                         self.instances[instance_id] = {
                             "ws": ws,
                             "name": name,
                             "project": project,
+                            "email": email,
                             "online": True,
                             "status": "online",
                             "task": "",
                             "workload": 0,
+                            "room": room,
                         }
                         # persist meta
                         meta = self.state["instances_meta"].setdefault(instance_id, {})
-                        meta.update({"name": name, "project": project})
+                        meta.update({"name": name, "project": project, "room": room})
+                        if email:
+                            meta["email"] = email
+                        if role_in:
+                            meta["role"] = role_in
                         meta.setdefault("role", "")
+                        meta.setdefault("email", "")
                         meta.setdefault("paused", False)
-                        self.audit(instance_id, "register", f"name={name} project={project}")
+                        self.audit(instance_id, "register",
+                                   f"name={name} project={project} email={email or '-'} room={room}")
                         self.schedule_write()
 
-                    # send memory init
+                    # send memory init (room-scoped)
+                    room_memory = [m for m in self.state["memory"]
+                                   if m.get("room", DEFAULT_ROOM) == room]
                     init_payload = {
                         "type": "memory_init",
-                        "memory": self.state["memory"],
+                        "memory": room_memory,
                         "ts": now_iso(),
                     }
                     try:
                         await ws.send(json.dumps(init_payload, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
 
-                    # send tasks init (focus on this instance's tasks)
+                    # send tasks init (focus on this instance's tasks in this room)
                     my_tasks = [t for t in self.state["tasks"]
                                 if t.get("assignee") == instance_id
-                                and t.get("status") not in ("Done", "Cancelled")]
+                                and t.get("status") not in ("Done", "Cancelled")
+                                and t.get("room", DEFAULT_ROOM) == room]
                     try:
                         await ws.send(json.dumps({
                             "type": "tasks_init",
                             "tasks": my_tasks,
                             "ts": now_iso(),
                         }, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
 
                     # deliver backlog
                     queued = list(self.backlog.get(instance_id, []))
@@ -952,19 +1031,21 @@ class Broker:
                     if queued:
                         try:
                             await ws.send(json.dumps({"type": "backlog", "messages": queued}, default=str))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
 
                     await self.broadcast_ui({
                         "type": "instance_online",
                         "instance": self.instances_snapshot(),
                         "id": instance_id,
+                        "room": room,
                     })
                     await self.state_update({"instances": self.instances_snapshot()})
 
                 elif mtype == "message":
                     if not instance_id:
                         continue
+                    sender_room = self.instances.get(instance_id, {}).get("room", DEFAULT_ROOM)
                     to = msg.get("to", "you")
                     text = (msg.get("text") or "").strip()
                     if not text:
@@ -975,15 +1056,20 @@ class Broker:
                         "to": to,
                         "text": text,
                         "ts": now_iso(),
+                        "room": sender_room,
                     }
                     async with self.lock:
                         self.state["messages"].append(entry)
-                        self.audit(instance_id, "message", f"to={to}")
+                        self.audit(instance_id, "message", f"to={to} room={sender_room}")
                         self.schedule_write()
                     if to == "you" or to == "ui":
                         await self.broadcast_ui({"type": "message", "message": entry})
                     else:
-                        await self.send_to_instance(to, {"type": "message", **entry})
+                        # verify recipient is in the same room
+                        recipient_info = self.instances.get(to, {})
+                        recipient_room = recipient_info.get("room", DEFAULT_ROOM)
+                        if recipient_room == sender_room:
+                            await self.send_to_instance(to, {"type": "message", **entry})
                         await self.broadcast_ui({"type": "message", "message": entry})
                     await self._evaluate_flows(entry)
 
@@ -1033,13 +1119,14 @@ class Broker:
                             "id": ap["id"],
                             "action": ap["action"],
                         }, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
                     await self.broadcast_ui({"type": "approval_request", "approval": ap})
 
                 elif mtype == "memory_write":
                     if not instance_id:
                         continue
+                    sender_room = self.instances.get(instance_id, {}).get("room", DEFAULT_ROOM)
                     async with self.lock:
                         entry = {
                             "id": self.next_id("M"),
@@ -1048,16 +1135,19 @@ class Broker:
                             "type": msg.get("mem_type", "contract"),
                             "by": instance_id,
                             "ts": now_iso(),
+                            "room": sender_room,
                         }
                         self.state["memory"].append(entry)
                         self.audit(instance_id, "memory_write", entry["key"])
                         self.schedule_write()
                     await self.broadcast_ui({"type": "memory_write", "memory": entry})
-                    await self.broadcast_instances({"type": "memory_write", "memory": entry}, exclude=instance_id)
+                    await self.broadcast_instances({"type": "memory_write", "memory": entry},
+                                                   exclude=instance_id, room=sender_room)
 
                 elif mtype == "broadcast":
                     if not instance_id:
                         continue
+                    sender_room = self.instances.get(instance_id, {}).get("room", DEFAULT_ROOM)
                     text = (msg.get("text") or "").strip()
                     if not text:
                         continue
@@ -1067,12 +1157,14 @@ class Broker:
                         "to": "all",
                         "text": text,
                         "ts": now_iso(),
+                        "room": sender_room,
                     }
                     async with self.lock:
                         self.state["messages"].append(entry)
                         self.audit(instance_id, "broadcast", text[:80])
                         self.schedule_write()
-                    await self.broadcast_instances({"type": "message", **entry}, exclude=instance_id)
+                    await self.broadcast_instances({"type": "message", **entry},
+                                                   exclude=instance_id, room=sender_room)
                     await self.broadcast_ui({"type": "message", "message": entry})
 
                 elif mtype == "typing":
@@ -1119,6 +1211,7 @@ class Broker:
                 elif mtype == "task_create":
                     if not instance_id:
                         continue
+                    sender_room = self.instances.get(instance_id, {}).get("room", DEFAULT_ROOM)
                     title = (msg.get("title") or "").strip()
                     if not title:
                         continue
@@ -1136,6 +1229,7 @@ class Broker:
                             "status": "In Progress" if assignee else "Backlog",
                             "created_by": instance_id,
                             "ts": now_iso(),
+                            "room": sender_room,
                         }
                         if self.has_cycle(self.state["tasks"] + [task]):
                             self.state["counters"]["T"] -= 1
@@ -1145,8 +1239,8 @@ class Broker:
                                     "error": "cyclic task dependencies",
                                     "ref": title,
                                 }))
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug("silently swallowed exception: %r", e)
                             continue
                         self.state["tasks"].append(task)
                         self.audit(instance_id, "task_create", f"{tid} -> {assignee or 'unassigned'}")
@@ -1194,8 +1288,8 @@ class Broker:
                                 "type": "error",
                                 "error": "vote_create requires question and >=2 options",
                             }))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
                         continue
                     options = [str(o) for o in options]
                     threshold = msg.get("threshold")
@@ -1228,8 +1322,8 @@ class Broker:
                             "question": question,
                             "options": list(options),
                         }, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
                     await self.state_update({"votes": self.state["votes"]})
                     # notify other instances so they can cast
                     await self.broadcast_instances({
@@ -1360,6 +1454,7 @@ class Broker:
                 "approvals": self.state["approvals"],
                 "votes": self.state["votes"],
                 "audit": self.state["audit"][-200:],
+                "channels": self._channels_list(),
             })
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -1379,8 +1474,43 @@ class Broker:
         if action == "send":
             to = data.get("to", "all")
             text = (data.get("text") or "").strip()
+            channel_in = data.get("channel")  # optional explicit channel
             if not text:
                 await ws.send_json({"type": "error", "error": "empty message"})
+                return
+            # Channel fan-out: to looks like "channel:<id>"
+            if isinstance(to, str) and to.startswith("channel:"):
+                cid = to[len("channel:"):]
+                ch = self._find_channel(cid)
+                if not ch:
+                    await ws.send_json({"type": "error",
+                                         "error": f"channel {cid} not found"})
+                    return
+                if not ch.get("members"):
+                    await ws.send_json({"type": "error",
+                                         "error": "channel has no members"})
+                    return
+                entries = []
+                async with self.lock:
+                    for member in ch["members"]:
+                        e = {
+                            "id": f"msg-{len(self.state['messages']) + 1}",
+                            "from": "you",
+                            "to": member,
+                            "text": text,
+                            "ts": now_iso(),
+                            "channel": cid,
+                        }
+                        self.state["messages"].append(e)
+                        entries.append(e)
+                    self.audit("you", "channel_send",
+                               f"channel={cid} members={len(ch['members'])}")
+                    self.schedule_write()
+                for e in entries:
+                    await self.send_to_instance(e["to"],
+                                                 {"type": "message", **e})
+                    await self.broadcast_ui({"type": "message", "message": e})
+                    await self._evaluate_flows(e)
                 return
             entry = {
                 "id": f"msg-{len(self.state['messages']) + 1}",
@@ -1389,6 +1519,8 @@ class Broker:
                 "text": text,
                 "ts": now_iso(),
             }
+            if channel_in:
+                entry["channel"] = str(channel_in)
             async with self.lock:
                 self.state["messages"].append(entry)
                 self.audit("you", "message", f"to={to}")
@@ -1659,6 +1791,27 @@ class Broker:
             return web.json_response({"error": "unauthorized"}, status=401)
         return None
 
+    def _cors_headers(self) -> dict:
+        """CORS headers for cross-origin access (needed when Angus uses the web UI remotely)."""
+        return {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, X-Mesh-Token",
+        }
+
+    def _json_response(self, data, *, status: int = 200) -> web.Response:
+        """Return a JSON response with CORS headers."""
+        return web.Response(
+            text=json.dumps(data, default=str),
+            status=status,
+            content_type="application/json",
+            headers=self._cors_headers(),
+        )
+
+    async def http_options(self, request):
+        """Handle CORS preflight OPTIONS requests."""
+        return web.Response(status=204, headers=self._cors_headers())
+
     async def http_index(self, request):
         if INDEX_PATH.exists():
             return web.FileResponse(INDEX_PATH)
@@ -1671,11 +1824,20 @@ class Broker:
         denied = self._check_rest_auth(request)
         if denied is not None:
             return denied
-        return web.json_response({
-            "instances": self.instances_snapshot(),
-            "messages": self.state["messages"][-50:],
-            "tasks": self.state["tasks"],
-            "memory": self.state["memory"],
+        room = request.query.get("room") or None
+        if room:
+            messages = [m for m in self.state["messages"] if m.get("room", DEFAULT_ROOM) == room]
+            tasks = [t for t in self.state["tasks"] if t.get("room", DEFAULT_ROOM) == room]
+            memory = [m for m in self.state["memory"] if m.get("room", DEFAULT_ROOM) == room]
+        else:
+            messages = self.state["messages"]
+            tasks = self.state["tasks"]
+            memory = self.state["memory"]
+        return self._json_response({
+            "instances": self.instances_snapshot(room=room),
+            "messages": messages[-50:],
+            "tasks": tasks,
+            "memory": memory,
             "approvals": self.state["approvals"],
             "audit": self.state["audit"][-50:],
         })
@@ -1684,7 +1846,10 @@ class Broker:
         denied = self._check_rest_auth(request)
         if denied is not None:
             return denied
-        return web.json_response(self.state)
+        # state["channels"] is a dict internally; expose as list for consumers.
+        out = dict(self.state)
+        out["channels"] = self._channels_list()
+        return self._json_response(out)
 
     async def http_send(self, request):
         denied = self._check_rest_auth(request)
@@ -1693,14 +1858,51 @@ class Broker:
         try:
             body = await request.json()
         except Exception:
-            return web.json_response({"error": "invalid json"}, status=400)
+            return self._json_response({"error": "invalid json"}, status=400)
         to = body.get("to", "all")
         text = (body.get("text") or "").strip()
         if not text:
-            return web.json_response({"error": "empty text"}, status=400)
-        # Optional "from" — defaults to "you" (human). Allows a Claude Code
-        # instance to send a one-shot REST message as itself (cc1 → cc2).
+            return self._json_response({"error": "empty text"}, status=400)
         sender = (body.get("from") or "you").strip() or "you"
+        room = (body.get("room") or "").strip() or None
+        channel_in = body.get("channel")
+
+        # Channel fan-out: to="channel:<id>" → one message per member, each
+        # tagged with channel=<id> so the UI can filter cleanly.
+        if isinstance(to, str) and to.startswith("channel:"):
+            cid = to[len("channel:"):]
+            ch = self._find_channel(cid)
+            if not ch:
+                return self._json_response(
+                    {"error": f"channel {cid} not found"}, status=404)
+            if not ch.get("members"):
+                return self._json_response(
+                    {"error": "channel has no members"}, status=400)
+            entries = []
+            async with self.lock:
+                for member in ch["members"]:
+                    e = {
+                        "id": f"msg-{len(self.state['messages']) + 1}",
+                        "from": sender,
+                        "to": member,
+                        "text": text,
+                        "ts": now_iso(),
+                        "channel": cid,
+                    }
+                    if room:
+                        e["room"] = room
+                    self.state["messages"].append(e)
+                    entries.append(e)
+                self.audit(sender, "channel_send",
+                           f"channel={cid} members={len(ch['members'])} (REST)")
+                self.schedule_write()
+            for e in entries:
+                await self.send_to_instance(e["to"], {"type": "message", **e})
+                await self.broadcast_ui({"type": "message", "message": e})
+                await self._evaluate_flows(e)
+            return self._json_response({"ok": True, "messages": entries,
+                                         "channel": cid})
+
         entry = {
             "id": f"msg-{len(self.state['messages']) + 1}",
             "from": sender,
@@ -1708,23 +1910,118 @@ class Broker:
             "text": text,
             "ts": now_iso(),
         }
+        if room:
+            entry["room"] = room
+        if channel_in:
+            entry["channel"] = str(channel_in)
         async with self.lock:
             self.state["messages"].append(entry)
-            self.audit(sender, "message", f"to={to} (REST)")
+            self.audit(sender, "message",
+                       f"to={to}{' channel=' + str(channel_in) if channel_in else ''} (REST)")
             self.schedule_write()
-        # Relay routing: anyone-to-all broadcasts; anyone-to-instance routes
-        # to that instance and (if sender isn't "you") also notifies the UI.
         if to == "all":
             await self.broadcast_instances({"type": "message", **entry},
-                                           exclude=sender if sender != "you" else None)
+                                           exclude=sender if sender != "you" else None,
+                                           room=room)
         elif to == "you":
-            # purely UI delivery — broadcast_ui below handles it
             pass
         else:
             await self.send_to_instance(to, {"type": "message", **entry})
         await self.broadcast_ui({"type": "message", "message": entry})
         await self._evaluate_flows(entry)
-        return web.json_response({"ok": True, "message": entry})
+        return self._json_response({"ok": True, "message": entry})
+
+    # ---- channels (server-side groups) -------------------------------------
+    # State shape: state["channels"] = { "ch_xxxxxxxx": {id, name, members, created_at}, ... }
+    # API responses return a list for consumer convenience.
+    def _channels_list(self):
+        return list(self.state.get("channels", {}).values())
+
+    def _new_channel_id(self):
+        # "ch_" + 8 alphanumeric chars (lowercase + digits)
+        alphabet = string.ascii_lowercase + string.digits
+        while True:
+            cid = "ch_" + "".join(random.choices(alphabet, k=8))
+            if cid not in self.state.get("channels", {}):
+                return cid
+
+    async def http_channels_list(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        return self._json_response({"channels": self._channels_list()})
+
+    async def http_channels_create(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._json_response({"error": "name required"}, status=400)
+        members = body.get("members") or []
+        if not isinstance(members, list):
+            return self._json_response({"error": "members must be a list"}, status=400)
+        members = [str(m).strip() for m in members if m]
+        if len(members) < 1:
+            return self._json_response({"error": "at least 1 member required"}, status=400)
+        cid = self._new_channel_id()
+        channel = {
+            "id": cid,
+            "name": name,
+            "members": members,
+            "created_at": now_iso(),
+        }
+        async with self.lock:
+            self.state.setdefault("channels", {})[cid] = channel
+            self.audit("you", "channel_create",
+                       f"id={cid} name={name} members={len(members)}")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "channels", "channels": self._channels_list()})
+        return self._json_response({"ok": True, "channel": channel})
+
+    async def http_channels_delete(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        cid = request.match_info.get("cid", "")
+        async with self.lock:
+            removed = self.state.get("channels", {}).pop(cid, None)
+            if removed:
+                self.audit("you", "channel_delete", f"id={cid}")
+                self.schedule_write()
+        await self.broadcast_ui({"type": "channels", "channels": self._channels_list()})
+        return self._json_response({"ok": True, "removed": 1 if removed else 0})
+
+    async def http_channels_update(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        cid = request.match_info.get("cid", "")
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        async with self.lock:
+            c = self.state.get("channels", {}).get(cid)
+            if not c:
+                return self._json_response({"error": "channel not found"}, status=404)
+            if "name" in body:
+                new_name = (body["name"] or "").strip()
+                if new_name:
+                    c["name"] = new_name
+            if "members" in body and isinstance(body["members"], list):
+                c["members"] = [str(m).strip() for m in body["members"] if m]
+            self.audit("you", "channel_update", f"id={cid}")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "channels", "channels": self._channels_list()})
+        return self._json_response({"ok": True, "channel": c})
+
+    def _find_channel(self, cid: str):
+        return self.state.get("channels", {}).get(cid)
 
     async def http_plugins(self, request):
         out = []
@@ -1763,14 +2060,50 @@ class Broker:
         self.audit("you", "clear_messages", "REST")
         self.schedule_write()
         await self.state_update({"messages": []})
-        return web.json_response({"ok": True})
+        return self._json_response({"ok": True})
 
     async def http_health(self, request):
-        return web.json_response({
+        return self._json_response({
             "ok": True,
             "uptime_seconds": self.uptime_seconds(),
             "online_instances": self.online_instance_count(),
             "build_sha": self._build_sha,
+        })
+
+    async def http_rooms(self, request):
+        """GET /api/rooms — list active rooms with instance counts."""
+        room_counts: dict[str, int] = {}
+        for iid, info in self.instances.items():
+            if not info.get("online"):
+                continue
+            r = info.get("room", DEFAULT_ROOM)
+            room_counts[r] = room_counts.get(r, 0) + 1
+        rooms = [
+            {"name": name, "online_instances": count}
+            for name, count in sorted(room_counts.items())
+        ]
+        # Also include rooms with offline-only instances from meta
+        seen_rooms = {r["name"] for r in rooms}
+        for iid, meta in self.state["instances_meta"].items():
+            r = meta.get("room", DEFAULT_ROOM)
+            if r not in seen_rooms:
+                seen_rooms.add(r)
+                rooms.append({"name": r, "online_instances": 0})
+        rooms.sort(key=lambda x: x["name"])
+        return self._json_response({"rooms": rooms})
+
+    async def http_share_info(self, request):
+        """GET /api/share-info — return URLs and token for remote joining.
+
+        Used by `claude-talk share` to display join instructions.
+        """
+        ip = local_ip()
+        return self._json_response({
+            "http_url": f"http://{ip}:{self.ui_port}",
+            "ws_url": f"ws://{ip}:{self.instance_port}",
+            "token": self.auth_token or "",
+            "ui_port": self.ui_port,
+            "instance_port": self.instance_port,
         })
 
     async def http_metrics(self, request):
@@ -1789,25 +2122,82 @@ class Broker:
         return resp
 
     async def http_instances(self, request):
-        return web.json_response(self.instances_snapshot())
+        room = request.query.get("room") or None
+        return self._json_response(self.instances_snapshot(room=room))
 
     async def http_tasks(self, request):
-        return web.json_response({"tasks": self.state["tasks"]})
+        room = request.query.get("room") or None
+        if room:
+            tasks = [t for t in self.state["tasks"] if t.get("room", DEFAULT_ROOM) == room]
+        else:
+            tasks = self.state["tasks"]
+        return self._json_response({"tasks": tasks})
 
     async def http_memory(self, request):
-        return web.json_response({"memory": self.state["memory"]})
+        room = request.query.get("room") or None
+        if room:
+            memory = [m for m in self.state["memory"] if m.get("room", DEFAULT_ROOM) == room]
+        else:
+            memory = self.state["memory"]
+        return self._json_response({"memory": memory})
+
+    # ---- read endpoints for primitives advertised in connect.py helpers -----
+    # Mirror the http_tasks/http_memory pattern: optional ?room= filter, plus
+    # a ?limit= for the noisier collections (audit, messages). These are pure
+    # reads with no side effects.
+    def _list_filter(self, key, room=None, limit=None, tail=True):
+        items = self.state.get(key, [])
+        if room:
+            items = [x for x in items if x.get("room", DEFAULT_ROOM) == room]
+        if limit:
+            try:
+                n = max(1, int(limit))
+            except Exception:
+                n = None
+            if n:
+                items = items[-n:] if tail else items[:n]
+        return items
+
+    async def http_approvals(self, request):
+        room = request.query.get("room") or None
+        return self._json_response(
+            {"approvals": self._list_filter("approvals", room=room)})
+
+    async def http_votes(self, request):
+        room = request.query.get("room") or None
+        return self._json_response(
+            {"votes": self._list_filter("votes", room=room)})
+
+    async def http_flows(self, request):
+        room = request.query.get("room") or None
+        return self._json_response(
+            {"flows": self._list_filter("flows", room=room)})
+
+    async def http_audit(self, request):
+        room = request.query.get("room") or None
+        limit = request.query.get("limit") or 200
+        return self._json_response(
+            {"audit": self._list_filter("audit", room=room, limit=limit)})
+
+    async def http_messages(self, request):
+        # Read-only list. POSTing a message still goes through /api/send.
+        room = request.query.get("room") or None
+        limit = request.query.get("limit") or 200
+        return self._json_response(
+            {"messages": self._list_filter("messages", room=room, limit=limit)})
 
     async def http_post_task(self, request):
         try:
             body = await request.json()
         except Exception:
-            return web.json_response({"error": "invalid json"}, status=400)
+            return self._json_response({"error": "invalid json"}, status=400)
         title = (body.get("title") or "").strip()
         if not title:
-            return web.json_response({"error": "empty title"}, status=400)
+            return self._json_response({"error": "empty title"}, status=400)
         assignee = body.get("assignee", "") or ""
         priority = body.get("priority", "normal")
         deps = body.get("deps") or []
+        room = (body.get("room") or DEFAULT_ROOM).strip() or DEFAULT_ROOM
         async with self.lock:
             tid = self.next_id("T")
             task = {
@@ -1819,10 +2209,11 @@ class Broker:
                 "status": "Backlog",
                 "created_by": "you",
                 "ts": now_iso(),
+                "room": room,
             }
             if self.has_cycle(self.state["tasks"] + [task]):
                 self.state["counters"]["T"] -= 1
-                return web.json_response({"error": "cyclic task dependencies"}, status=400)
+                return self._json_response({"error": "cyclic task dependencies"}, status=400)
             self.state["tasks"].append(task)
             self.audit("you", "task_create", f"{tid} (REST)")
             self.schedule_write()
@@ -1831,18 +2222,19 @@ class Broker:
                 "type": "task_assigned", "task": task,
             })
         await self.state_update({"tasks": self.state["tasks"]})
-        return web.json_response({"ok": True, "task": task})
+        return self._json_response({"ok": True, "task": task})
 
     async def http_post_memory(self, request):
         try:
             body = await request.json()
         except Exception:
-            return web.json_response({"error": "invalid json"}, status=400)
+            return self._json_response({"error": "invalid json"}, status=400)
         key = (body.get("key") or "").strip()
         if not key:
-            return web.json_response({"error": "empty key"}, status=400)
+            return self._json_response({"error": "empty key"}, status=400)
         value = body.get("value", "")
         mem_type = body.get("mem_type", "contract")
+        room = (body.get("room") or DEFAULT_ROOM).strip() or DEFAULT_ROOM
         async with self.lock:
             entry = {
                 "id": self.next_id("M"),
@@ -1851,13 +2243,120 @@ class Broker:
                 "type": mem_type,
                 "by": "you",
                 "ts": now_iso(),
+                "room": room,
             }
             self.state["memory"].append(entry)
             self.audit("you", "memory_write", f"{key} (REST)")
             self.schedule_write()
         await self.broadcast_ui({"type": "memory_write", "memory": entry})
-        await self.broadcast_instances({"type": "memory_write", "memory": entry})
-        return web.json_response({"ok": True, "memory": entry})
+        await self.broadcast_instances({"type": "memory_write", "memory": entry}, room=room)
+        return self._json_response({"ok": True, "memory": entry})
+
+    # ------------------- team endpoints -------------------
+    async def http_teams_create(self, request):
+        """POST /api/teams — create a team, returns {team_id, invite_code, invite_url}."""
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._json_response({"error": "name is required"}, status=400)
+        room = (body.get("room") or name.lower().replace(" ", "-")).strip() or "default"
+
+        # Generate a unique invite code
+        async with self.lock:
+            for _ in range(20):
+                code = _generate_invite_code()
+                if code not in self.state["invite_codes"]:
+                    break
+            team_id = f"team-{code.lower()}"
+            team = {
+                "id": team_id,
+                "name": name,
+                "room": room,
+                "invite_code": code,
+                "created_at": now_iso(),
+                "members": [],
+            }
+            self.state["teams"][team_id] = team
+            self.state["invite_codes"][code] = team_id
+            self.audit("system", "team_create", f"{team_id} name={name} room={room}")
+            self.schedule_write()
+
+        # Build invite URL — try to figure out our public URL from ngrok or share-info
+        base_url = request.headers.get("X-Forwarded-Host") or f"http://localhost:{self.ui_port}"
+        # If accessed via a forwarded host (ngrok), reconstruct the scheme too
+        scheme = request.headers.get("X-Forwarded-Proto", "http")
+        if request.headers.get("X-Forwarded-Host"):
+            base_url = f"{scheme}://{request.headers['X-Forwarded-Host']}"
+        invite_url = f"{base_url}/api/invite/{code}"
+        return self._json_response({
+            "team_id": team_id,
+            "name": name,
+            "room": room,
+            "invite_code": code,
+            "invite_url": invite_url,
+        })
+
+    async def http_teams_get(self, request):
+        """GET /api/teams/{team_id} — get team info."""
+        team_id = request.match_info.get("team_id", "")
+        team = self.state["teams"].get(team_id)
+        if not team:
+            return self._json_response({"error": "team not found"}, status=404)
+        return self._json_response(team)
+
+    async def http_teams_join(self, request):
+        """POST /api/teams/{team_id}/join — join with invite_code, returns {token, room}."""
+        team_id = request.match_info.get("team_id", "")
+        team = self.state["teams"].get(team_id)
+        if not team:
+            return self._json_response({"error": "team not found"}, status=404)
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        invite_code = (body.get("invite_code") or "").strip().upper()
+        if invite_code != team["invite_code"]:
+            return self._json_response({"error": "invalid invite code"}, status=403)
+        member_id = (body.get("instance_id") or body.get("id") or "").strip()
+        member_name = (body.get("name") or member_id).strip()
+        if member_id:
+            async with self.lock:
+                members = team.setdefault("members", [])
+                existing = next((m for m in members if m["id"] == member_id), None)
+                if not existing:
+                    members.append({
+                        "id": member_id,
+                        "name": member_name,
+                        "joined_at": now_iso(),
+                    })
+                self.audit(member_id or "unknown", "team_join", f"{team_id}")
+                self.schedule_write()
+        return self._json_response({
+            "ok": True,
+            "team_id": team_id,
+            "room": team["room"],
+            "token": self.auth_token or "",
+        })
+
+    async def http_invite_resolve(self, request):
+        """GET /api/invite/{invite_code} — resolve invite code to team info."""
+        code = (request.match_info.get("invite_code") or "").strip().upper()
+        team_id = self.state["invite_codes"].get(code)
+        if not team_id:
+            return self._json_response({"error": "invite code not found"}, status=404)
+        team = self.state["teams"].get(team_id)
+        if not team:
+            return self._json_response({"error": "team not found"}, status=404)
+        return self._json_response({
+            "team_id": team_id,
+            "name": team["name"],
+            "room": team["room"],
+            "invite_code": code,
+            "member_count": len(team.get("members", [])),
+        })
 
     # ------------------- lifecycle -------------------
     async def start(self):
@@ -1888,10 +2387,30 @@ class Broker:
         app.router.add_get("/api/instances", self.http_instances)
         app.router.add_get("/api/tasks", self.http_tasks)
         app.router.add_get("/api/memory", self.http_memory)
+        app.router.add_get("/api/approvals", self.http_approvals)
+        app.router.add_get("/api/votes", self.http_votes)
+        app.router.add_get("/api/flows", self.http_flows)
+        app.router.add_get("/api/audit", self.http_audit)
+        app.router.add_get("/api/messages", self.http_messages)
         app.router.add_post("/api/task", self.http_post_task)
         app.router.add_post("/api/memory", self.http_post_memory)
         app.router.add_get("/api/plugins", self.http_plugins)
         app.router.add_get("/api/plugins/{plugin_id}", self.http_plugin_detail)
+        # New endpoints: rooms and share-info
+        app.router.add_get("/api/rooms", self.http_rooms)
+        app.router.add_get("/api/share-info", self.http_share_info)
+        # channels (server-side groups)
+        app.router.add_get("/api/channels", self.http_channels_list)
+        app.router.add_post("/api/channels", self.http_channels_create)
+        app.router.add_delete("/api/channels/{cid}", self.http_channels_delete)
+        app.router.add_put("/api/channels/{cid}", self.http_channels_update)
+        # Team / invite endpoints
+        app.router.add_post("/api/teams", self.http_teams_create)
+        app.router.add_get("/api/teams/{team_id}", self.http_teams_get)
+        app.router.add_post("/api/teams/{team_id}/join", self.http_teams_join)
+        app.router.add_get("/api/invite/{invite_code}", self.http_invite_resolve)
+        # CORS preflight for all /api/ routes
+        app.router.add_route("OPTIONS", "/api/{path_info:.*}", self.http_options)
 
         self._http_runner = web.AppRunner(app)
         await self._http_runner.setup()
@@ -1990,25 +2509,25 @@ class Broker:
         # Unregister mDNS so we stop advertising before any sockets close.
         try:
             await self._mdns_unregister()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         try:
             if self._ws_server:
                 self._ws_server.close()
                 await self._ws_server.wait_closed()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         try:
             if self._http_runner:
                 await self._http_runner.cleanup()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         # flush pending write
         if self._write_task and not self._write_task.done():
             try:
                 await self._write_task
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("silently swallowed exception: %r", e)
         try:
             tmp = self.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
@@ -2025,8 +2544,8 @@ class Broker:
                     os.close(dir_fd)
             except (OSError, AttributeError):
                 pass  # not available on all platforms (e.g. Windows)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
 
 
 def local_ip() -> str:

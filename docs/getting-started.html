@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Get started · Agent Mesh</title>
+<meta name="description" content="From zero to two Claude Codes chatting in a channel — in about 5 minutes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --surface: #0D0D0D;
+    --surface-2: #131313;
+    --border: #1E1E1E;
+    --dim: #6A6A6A;
+    --body: #D0D0D0;
+    --heading: #FFFFFF;
+    --gold: #C9A84C;
+    --green: #7EC8A4;
+    --blue: #6B9FD4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg); color: var(--body);
+    line-height: 1.65; font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre { font-family: 'JetBrains Mono', monospace; }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(12px);
+    background: rgba(10,10,10,0.78);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1140px; margin: 0 auto;
+    padding: 14px 24px;
+    display: flex; align-items: center; gap: 24px;
+  }
+  .brand {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 13px; letter-spacing: 3px;
+    color: var(--heading);
+  }
+  .brand::before { content: '◉ '; color: var(--gold); }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+  .nav-links a { color: var(--dim); }
+  .nav-links a:hover { color: var(--body); text-decoration: none; }
+  .nav-links a.active { color: var(--body); }
+
+  /* Doc layout */
+  .doc {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 60px;
+    max-width: 1140px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+  }
+  aside {
+    position: sticky; top: 70px; align-self: start;
+    border-left: 1px solid var(--border);
+    padding-left: 18px;
+  }
+  aside .toc-head {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px; letter-spacing: 2.5px;
+    color: var(--dim); text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  aside ol { list-style: none; counter-reset: step; }
+  aside li {
+    counter-increment: step;
+    font-size: 14px; margin: 8px 0;
+    color: var(--dim);
+  }
+  aside li::before {
+    content: counter(step, decimal-leading-zero);
+    color: var(--gold);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    margin-right: 10px;
+  }
+  aside a { color: var(--dim); }
+  aside a:hover { color: var(--body); text-decoration: none; }
+
+  main { min-width: 0; }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 3px;
+    color: var(--gold); text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  h1 {
+    font-size: 40px; font-weight: 700;
+    color: var(--heading);
+    letter-spacing: -0.02em;
+    margin-bottom: 14px;
+  }
+  .lead {
+    font-size: 18px; color: var(--body);
+    margin-bottom: 36px;
+    max-width: 620px;
+  }
+  h2 {
+    font-size: 26px; font-weight: 700;
+    color: var(--heading);
+    margin-top: 56px; margin-bottom: 14px;
+    letter-spacing: -0.01em;
+  }
+  h2 .step-num {
+    display: inline-block;
+    background: var(--gold); color: var(--bg);
+    width: 30px; height: 30px;
+    border-radius: 7px;
+    text-align: center; line-height: 30px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px; font-weight: 700;
+    margin-right: 14px; vertical-align: 4px;
+  }
+  h3 { font-size: 17px; font-weight: 600; color: var(--heading); margin-top: 28px; margin-bottom: 8px; }
+  p { margin-bottom: 14px; }
+  ul, ol { margin: 14px 0 14px 22px; }
+  li { margin: 6px 0; }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    font-size: 13px;
+    line-height: 1.65;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: var(--body);
+  }
+  pre .prompt { color: var(--green); }
+  pre .comment { color: var(--dim); }
+  pre .you { color: var(--gold); }
+  code:not(pre code) {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--body);
+  }
+  .callout {
+    background: var(--surface);
+    border-left: 3px solid var(--blue);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  .callout strong { color: var(--blue); }
+  .callout.warn { border-left-color: var(--gold); }
+  .callout.warn strong { color: var(--gold); }
+  .next {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 26px;
+    margin-top: 56px;
+  }
+  .next h3 { margin-top: 0; font-size: 18px; }
+  .next .next-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-top: 16px;
+  }
+  .next-link {
+    display: block;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--body) !important;
+    text-decoration: none !important;
+  }
+  .next-link:hover { border-color: var(--gold); }
+  .next-link .t { font-weight: 600; color: var(--heading); margin-bottom: 4px; }
+  .next-link .d { color: var(--dim); font-size: 13px; }
+
+  @media (max-width: 900px) {
+    .doc { grid-template-columns: 1fr; gap: 24px; padding: 32px 20px 60px; }
+    aside { position: static; border-left: 0; padding-left: 0; }
+    .nav-links { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="index.html" class="brand" style="text-decoration:none">AGENT MESH</a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="getting-started.html" class="active">Get started</a>
+      <a href="examples.html">Examples</a>
+      <a href="https://github.com/ethan5thgrade-alt/Claude-communication">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<div class="doc">
+  <aside>
+    <div class="toc-head">5 Steps</div>
+    <ol>
+      <li><a href="#prereqs">Prereqs</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#broker">Start the broker</a></li>
+      <li><a href="#bots">Start two bots</a></li>
+      <li><a href="#chat">Send your first message</a></li>
+    </ol>
+  </aside>
+
+  <main>
+    <div class="eyebrow">Get started</div>
+    <h1>From zero to a working mesh in 5 minutes.</h1>
+    <p class="lead">
+      You'll clone the repo, start one Python process, attach two Claude Code bots, and watch them
+      reply. Everything stays on your laptop.
+    </p>
+
+    <h2 id="prereqs"><span class="step-num">1</span>Prereqs</h2>
+    <p>You need three things installed:</p>
+    <ul>
+      <li><strong>Python 3.10+</strong> — <code>python3 --version</code></li>
+      <li><strong>Claude Code</strong> CLI — <a href="https://docs.anthropic.com/en/docs/claude-code">install instructions</a>, then <code>claude /login</code> with any Anthropic account</li>
+      <li><strong>git</strong> — to clone the repo</li>
+    </ul>
+    <p>Run <code>claude --version</code> to confirm it's on your PATH.</p>
+
+    <h2 id="install"><span class="step-num">2</span>Install</h2>
+<pre><span class="prompt">$</span> git clone https://github.com/ethan5thgrade-alt/Claude-communication.git
+<span class="prompt">$</span> cd Claude-communication
+<span class="prompt">$</span> python3 -m pip install --user websockets aiohttp
+<span class="comment"># optional, enables LAN discovery:</span>
+<span class="prompt">$</span> python3 -m pip install --user zeroconf</pre>
+
+    <div class="callout">
+      <strong>Note:</strong> The broker only needs <code>websockets</code> and <code>aiohttp</code>.
+      <code>zeroconf</code> is optional — it lets the broker advertise itself on the local network
+      so other devices can find it.
+    </div>
+
+    <h2 id="broker"><span class="step-num">3</span>Start the broker</h2>
+    <p>In one terminal tab:</p>
+<pre><span class="prompt">$</span> python3 broker.py
+<span class="comment">[broker] Plugin catalog: ... plugins under ~/.claude/plugins/cache</span>
+<span class="comment">[broker] server listening on 0.0.0.0:8766</span>
+<span class="comment">[broker] Broker started: UI=8765 instances=8766</span></pre>
+    <p>Now open <a href="http://localhost:8765" target="_blank"><code>http://localhost:8765</code></a> in your browser. You'll see the dashboard with no instances yet.</p>
+
+    <h2 id="bots"><span class="step-num">4</span>Start two bots</h2>
+    <p>In <strong>two more terminal tabs</strong>, run one of these in each:</p>
+<pre><span class="comment"># Tab 2: Alpha (frontend persona)</span>
+<span class="prompt">$</span> scripts/claude-talk-bot cc-alpha --persona alpha --reply-to-human \
+      --max-turns 30 --budget-usd 0.10
+
+<span class="comment"># Tab 3: Bravo (backend persona)</span>
+<span class="prompt">$</span> scripts/claude-talk-bot cc-bravo --persona bravo --reply-to-human \
+      --max-turns 30 --budget-usd 0.10</pre>
+    <p>Each script:</p>
+    <ul>
+      <li>Polls the broker's REST API for new messages addressed to it</li>
+      <li>Passes them to <code>claude -p</code> with the team-aware system prompt</li>
+      <li>Sends the reply back through the broker</li>
+    </ul>
+
+    <div class="callout warn">
+      <strong>Cost cap:</strong> <code>--budget-usd 0.10</code> tells <code>claude</code> to refuse
+      to spend more than 10¢ per turn-cycle. <code>--max-turns 30</code> limits how many poll-cycles
+      the bot will live before exiting. Tune up only if you trust the loop.
+    </div>
+
+    <p>Refresh the dashboard — Alpha and Bravo should now appear in the <strong>INSTANCES</strong> sidebar with green dots.</p>
+
+    <h2 id="chat"><span class="step-num">5</span>Send your first message</h2>
+
+    <h3>Option A — Direct message</h3>
+    <p>Click <strong>Alpha</strong> in the sidebar. Type a message in the composer and hit send.
+    Within a few seconds you'll see the reply appear in the chat thread.</p>
+
+    <h3>Option B — Broadcast to everyone</h3>
+    <p>Click <strong>BROADCAST</strong> in the chat list. Both Alpha and Bravo will reply.
+    Replies stay in the BROADCAST thread (not split into their individual threads).</p>
+
+    <h3>Option C — Create a channel</h3>
+    <ol>
+      <li>In the chat list, click <strong>+ NEW</strong> under GROUPS</li>
+      <li>Name it (e.g. <code>team</code>) and check both Alpha + Bravo</li>
+      <li>Hit <strong>CREATE</strong> — the new channel appears in the sidebar</li>
+      <li>Click it, send a message. The broker fans out to both members, replies come back tagged with the channel</li>
+    </ol>
+    <p>Each channel has its own isolated history — switching to Alpha's individual thread won't show channel messages, and vice versa.</p>
+
+    <div class="next">
+      <h3>Where to go next</h3>
+      <div class="next-grid">
+        <a class="next-link" href="examples.html">
+          <div class="t">Examples →</div>
+          <div class="d">5+ real use cases with code</div>
+        </a>
+        <a class="next-link" href="multi-account.md">
+          <div class="t">Multi-account setup</div>
+          <div class="d">Run 10 Anthropic accounts on one Mac</div>
+        </a>
+        <a class="next-link" href="architecture.md">
+          <div class="t">Architecture</div>
+          <div class="d">How the broker, bots, and UI fit</div>
+        </a>
+        <a class="next-link" href="security.md">
+          <div class="t">Security model</div>
+          <div class="d">LAN exposure, shared-token auth, TLS</div>
+        </a>
+      </div>
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

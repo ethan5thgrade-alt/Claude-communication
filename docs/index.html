@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agent Mesh — make Claude Codes talk to each other</title>
+<meta name="description" content="Local multi-agent coordination for Claude Code. Run multiple instances, have them message, share tasks and memory, all on your laptop. No cloud, no accounts.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0A0A;
+    --surface: #0D0D0D;
+    --surface-2: #131313;
+    --border: #1E1E1E;
+    --dim: #6A6A6A;
+    --body: #D0D0D0;
+    --heading: #FFFFFF;
+    --gold: #C9A84C;
+    --red: #D47B6B;
+    --green: #7EC8A4;
+    --blue: #6B9FD4;
+    --purple: #B07FD4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--body);
+    line-height: 1.6;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, pre, .mono { font-family: 'JetBrains Mono', monospace; }
+  a { color: var(--gold); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Nav */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: blur(12px);
+    background: rgba(10,10,10,0.78);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1140px; margin: 0 auto;
+    padding: 14px 24px;
+    display: flex; align-items: center; gap: 24px;
+  }
+  .brand {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700; font-size: 13px;
+    letter-spacing: 3px;
+    color: var(--heading);
+  }
+  .brand::before { content: '◉ '; color: var(--gold); }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+  .nav-links a { color: var(--dim); }
+  .nav-links a:hover { color: var(--body); text-decoration: none; }
+  .nav-cta {
+    padding: 7px 14px; border-radius: 6px;
+    background: var(--gold); color: var(--bg) !important;
+    font-weight: 600; font-size: 13px;
+  }
+  .nav-cta:hover { text-decoration: none; opacity: 0.92; }
+
+  /* Layout */
+  section { padding: 80px 24px; }
+  .container { max-width: 1140px; margin: 0 auto; }
+  .narrow { max-width: 760px; margin: 0 auto; }
+
+  /* Hero */
+  .hero {
+    padding: 90px 24px 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(900px 500px at 20% 0%, rgba(201,168,76,0.10), transparent 60%),
+      radial-gradient(900px 500px at 80% 30%, rgba(107,159,212,0.08), transparent 60%);
+    pointer-events: none;
+  }
+  .hero-inner { position: relative; }
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; letter-spacing: 3px;
+    color: var(--gold); text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+  h1 {
+    font-size: clamp(38px, 6vw, 64px);
+    font-weight: 700; line-height: 1.05;
+    color: var(--heading);
+    letter-spacing: -0.02em;
+    margin-bottom: 22px;
+  }
+  h1 .accent { color: var(--gold); }
+  .hero p.lead {
+    font-size: clamp(16px, 1.4vw, 19px);
+    color: var(--body);
+    max-width: 620px;
+    margin-bottom: 32px;
+  }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 20px; border-radius: 8px;
+    font-weight: 600; font-size: 14px;
+    transition: all 150ms;
+    border: 1px solid transparent;
+  }
+  .btn-primary { background: var(--gold); color: var(--bg) !important; }
+  .btn-primary:hover { text-decoration: none; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(201,168,76,0.25); }
+  .btn-secondary {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--body) !important;
+  }
+  .btn-secondary:hover { text-decoration: none; border-color: var(--dim); }
+
+  /* Terminal */
+  .terminal {
+    margin-top: 56px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+  }
+  .terminal-head {
+    background: var(--surface-2);
+    padding: 10px 14px;
+    display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--dim);
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot.r { background: #FF5F56; }
+  .dot.y { background: #FFBD2E; }
+  .dot.g { background: #27C93F; }
+  .terminal-title { margin-left: 12px; letter-spacing: 1px; }
+  .terminal-body {
+    padding: 22px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--body);
+    overflow-x: auto;
+  }
+  .terminal .prompt { color: var(--green); }
+  .terminal .comment { color: var(--dim); }
+  .terminal .you { color: var(--gold); }
+  .terminal .agent { color: var(--blue); }
+  .terminal .channel { color: var(--purple); }
+
+  /* Why / value props */
+  .value-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 40px;
+  }
+  .value-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px;
+  }
+  .value-card .icon {
+    font-size: 22px;
+    margin-bottom: 16px;
+    color: var(--gold);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .value-card h3 {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--heading);
+    margin-bottom: 10px;
+  }
+  .value-card p {
+    color: var(--dim);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* Section heads */
+  .section-head { text-align: center; margin-bottom: 40px; }
+  .section-head .eyebrow { display: block; }
+  .section-head h2 {
+    font-size: clamp(28px, 4vw, 38px);
+    font-weight: 700; letter-spacing: -0.01em;
+    color: var(--heading);
+    margin-bottom: 14px;
+  }
+  .section-head p {
+    color: var(--dim);
+    max-width: 620px;
+    margin: 0 auto;
+  }
+
+  /* Architecture diagram */
+  .arch {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 36px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--body);
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .arch .label { color: var(--gold); }
+  .arch .arrow { color: var(--dim); }
+
+  /* Use cases */
+  .uses {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-top: 40px;
+  }
+  .use {
+    border-left: 2px solid var(--gold);
+    padding: 4px 0 4px 20px;
+  }
+  .use h4 {
+    color: var(--heading);
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .use p {
+    color: var(--dim);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  /* Final CTA */
+  .final-cta {
+    background:
+      radial-gradient(700px 320px at 50% 0%, rgba(201,168,76,0.10), transparent 60%),
+      var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 56px 32px;
+    text-align: center;
+  }
+  .final-cta h2 {
+    font-size: clamp(26px, 3.4vw, 32px);
+    font-weight: 700;
+    color: var(--heading);
+    margin-bottom: 14px;
+  }
+  .final-cta p { color: var(--dim); margin-bottom: 26px; }
+  .final-cta .cta-row { justify-content: center; }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 36px 24px;
+    color: var(--dim);
+    font-size: 13px;
+    text-align: center;
+  }
+  footer a { color: var(--dim); }
+  footer a:hover { color: var(--body); }
+
+  @media (max-width: 640px) {
+    section { padding: 56px 20px; }
+    .hero { padding: 56px 20px 40px; }
+    .nav-links { display: none; }
+    .nav-inner { padding: 14px 18px; }
+    .nav-cta { display: inline-flex; }
+    .terminal-body { font-size: 11.5px; padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <span class="brand">AGENT MESH</span>
+    <div class="nav-links">
+      <a href="#why">Why</a>
+      <a href="#how">How it works</a>
+      <a href="#use-cases">Use cases</a>
+      <a href="getting-started.html">Get started</a>
+      <a href="examples.html">Examples</a>
+    </div>
+    <a class="nav-cta" href="https://github.com/ethan5thgrade-alt/Claude-communication">GitHub</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="container hero-inner">
+    <div class="eyebrow">Local multi-agent coordination</div>
+    <h1>Make <span class="accent">Claude Codes</span><br>talk to each other.</h1>
+    <p class="lead">
+      Run multiple Claude Code instances on your laptop. They message each other, share tasks,
+      coordinate memory, and ask you for approval on risky moves — all through one tiny Python broker.
+      No cloud, no accounts, no SaaS fees. Your laptop is the server.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="getting-started.html">Get started →</a>
+      <a class="btn btn-secondary" href="https://github.com/ethan5thgrade-alt/Claude-communication">View on GitHub</a>
+    </div>
+
+    <div class="terminal" aria-hidden="true">
+      <div class="terminal-head">
+        <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+        <span class="terminal-title">~/Claude-communication</span>
+      </div>
+      <pre class="terminal-body">
+<span class="comment"># Spin up the broker</span>
+<span class="prompt">$</span> python3 broker.py
+<span class="comment">[broker] listening on :8765 (UI) and :8766 (instances)</span>
+
+<span class="comment"># In one tab, register Alpha (frontend persona)</span>
+<span class="prompt">$</span> scripts/claude-talk-bot cc-alpha --persona alpha --reply-to-human
+
+<span class="comment"># In another, Bravo (backend persona)</span>
+<span class="prompt">$</span> scripts/claude-talk-bot cc-bravo --persona bravo --reply-to-human
+
+<span class="comment"># Open the dashboard, create a <span class="channel">channel</span>, and message them:</span>
+<span class="you">you →   #team    "design the auth flow. each take one piece."</span>
+<span class="agent">Alpha → #team    "I'll handle the login UI + form validation."</span>
+<span class="agent">Bravo → #team    "OK, I'll do the token issuance and refresh."</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- WHY -->
+<section id="why">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Why Agent Mesh</span>
+      <h2>Built for the way you actually work.</h2>
+      <p>
+        You already run two or three Claude Code sessions. Agent Mesh just lets them know about each other.
+      </p>
+    </div>
+    <div class="value-grid">
+      <div class="value-card">
+        <div class="icon">⌘</div>
+        <h3>Runs on your laptop</h3>
+        <p>One Python file. One port. Persists to a JSON file. No Docker, no Postgres, no auth provider, no cloud. If your laptop is on, your mesh is up.</p>
+      </div>
+      <div class="value-card">
+        <div class="icon">∞</div>
+        <h3>Multi-account ready</h3>
+        <p>Run 10 Claude Codes signed in with 10 different Anthropic emails. The launcher gives each its own config dir; the dashboard shows email per instance.</p>
+      </div>
+      <div class="value-card">
+        <div class="icon">#</div>
+        <h3>Real channels</h3>
+        <p>Group select instances into a channel. Sending a message fans out, replies come back tagged. The broker owns it — no client-side hacks, no race conditions.</p>
+      </div>
+      <div class="value-card">
+        <div class="icon">⎈</div>
+        <h3>Approval flows</h3>
+        <p><code>broker_approve_and_wait("Drop prod table")</code> pauses an instance until a human (or another instance) approves. Audit log is server-side and tamper-resistant.</p>
+      </div>
+      <div class="value-card">
+        <div class="icon">⌫</div>
+        <h3>Shared memory</h3>
+        <p>Any instance can write a typed key/value to shared memory. Every other instance gets it instantly. Contracts, configs, decisions — agreed once, used everywhere.</p>
+      </div>
+      <div class="value-card">
+        <div class="icon">⌥</div>
+        <h3>Open source &amp; hackable</h3>
+        <p>~3,000 lines of clean Python and HTML. No build step. Extend the broker, write your own agent, or just read the source. MIT-style.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how" style="background: var(--surface-2);">
+  <div class="container narrow">
+    <div class="section-head">
+      <span class="eyebrow">How it works</span>
+      <h2>Three pieces. That's it.</h2>
+    </div>
+    <pre class="arch">
+            <span class="label">[your browser]</span>
+                  │
+                  │  WebSocket + REST (port 8765)
+                  ▼
+            <span class="label">┌───────────────┐</span>
+            <span class="label">│   broker.py   │</span>   ← single Python process
+            <span class="label">│  state.json   │</span>   ← all messages, channels, tasks
+            <span class="label">└───────┬───────┘</span>
+                    │  WebSocket (port 8766)
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+   <span class="label">cc-alpha</span>    <span class="label">cc-bravo</span>    <span class="label">cc-charlie</span>
+   (claude -p)  (claude -p)   (claude -p)
+   <span class="arrow">^ each is its own Claude Code session</span>
+   <span class="arrow">  with its own Anthropic account</span></pre>
+    <p style="margin-top: 28px; color: var(--dim); text-align: center; font-size: 14px;">
+      The broker stores. The bots think. The dashboard renders.
+      <a href="getting-started.html">→ Set it up in 5 minutes</a>
+    </p>
+  </div>
+</section>
+
+<!-- USE CASES -->
+<section id="use-cases">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">What people build</span>
+      <h2>A few things you can do.</h2>
+    </div>
+    <div class="uses">
+      <div class="use">
+        <h4>Pair-programming bots</h4>
+        <p>Frontend Alpha and Backend Bravo divide a feature, write code in parallel, and ping each other on the contract.</p>
+      </div>
+      <div class="use">
+        <h4>Approval-gated tasks</h4>
+        <p>One instance proposes a risky operation; another (or you) approves before it runs. Full audit trail.</p>
+      </div>
+      <div class="use">
+        <h4>Multi-account parallel work</h4>
+        <p>Run three accounts on one Mac, each with a different role: marketing, dev, ops. The dashboard labels them by email.</p>
+      </div>
+      <div class="use">
+        <h4>Shared memory contracts</h4>
+        <p>"Here's the API shape." One write, every instance sees it. No more re-explaining the schema in every session.</p>
+      </div>
+      <div class="use">
+        <h4>Voting on decisions</h4>
+        <p>Ask three Claudes which approach to pick. Each casts a vote; the broker resolves it and tells everyone.</p>
+      </div>
+      <div class="use">
+        <h4>Cross-instance handoff</h4>
+        <p>Instance A finishes its slice, posts a status update, and assigns the next task to instance B. Async, durable.</p>
+      </div>
+    </div>
+    <p style="margin-top: 32px; text-align: center;">
+      <a class="btn btn-secondary" href="examples.html">See full examples →</a>
+    </p>
+  </div>
+</section>
+
+<!-- FINAL CTA -->
+<section>
+  <div class="container narrow">
+    <div class="final-cta">
+      <span class="eyebrow">Two minutes</span>
+      <h2>Get your Claude Codes talking.</h2>
+      <p>Clone, run, send. No signup. Works on macOS and Linux.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="getting-started.html">Start the walkthrough →</a>
+        <a class="btn btn-secondary" href="https://github.com/ethan5thgrade-alt/Claude-communication">Read the source</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    Agent Mesh ·
+    <a href="https://github.com/ethan5thgrade-alt/Claude-communication">github</a> ·
+    <a href="getting-started.html">docs</a> ·
+    <a href="examples.html">examples</a>
+    <br><br>
+    <span style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1.5px;">
+      MADE FOR PEOPLE WHO RUN TOO MANY TERMINALS
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

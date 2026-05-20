@@ -1,0 +1,21 @@
+title: Agent Mesh
+description: Local multi-agent coordination for Claude Code.
+
+# Serve the static HTML pages we author here; don't apply a theme since each
+# page is fully self-styled and self-contained.
+theme: null
+
+# Pretty URLs for the markdown files (architecture.md, security.md, etc.).
+permalink: /:title/
+
+# Don't process these as Jekyll templates.
+include:
+  - index.html
+  - getting-started.html
+  - examples.html
+
+# Markdown via kramdown is fine for the rest.
+markdown: kramdown
+kramdown:
+  syntax_highlighter: rouge
+  input: GFM
