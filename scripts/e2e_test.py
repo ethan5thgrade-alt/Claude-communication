@@ -45,9 +45,11 @@ def send(to: str, text: str, frm: str = "you") -> str:
     return res["message"]["id"]
 
 def msgs_after(start_id: str) -> list[dict]:
-    """Return all messages with id > start_id (numeric suffix compare)."""
+    """Return all messages with id > start_id (numeric suffix compare).
+    Uses /api/state (full history) not /api/status (last 50 only), so the
+    marker never falls outside the visible window when many tests run."""
     start = int(start_id.split("-")[-1])
-    data = get("/api/status")
+    data = get("/api/state")
     out = []
     for m in data.get("messages", []):
         try:
@@ -178,15 +180,22 @@ def t05():
     if self_replies:
         raise TestFail(f"alpha replied to itself: {[m['text'] for m in self_replies]}")
 
-@test("06-agent-to-agent-reply-routes-correctly")
+@test("06-agent-to-agent-direct-is-muted")
 def t06():
-    # Bravo messages Alpha; verify Alpha's reply is addressed to Bravo
-    # (not the human). Tests the agent-to-agent routing path.
-    marker = send(to="cc-alpha", text="Hi Alpha. Reply exactly: ack", frm="cc-bravo")
-    r = wait_for(lambda ms: next((m for m in ms
-                  if m["from"] == "cc-alpha" and m["to"] == "cc-bravo"), None),
-                 marker, timeout=25)
-    print(f"  alpha → bravo: {r['text']!r}")
+    # Direct cc->cc (no channel) is INTENTIONALLY muted by the bot's reply
+    # policy to prevent loops. Agent-to-agent coordination must go through
+    # a channel — covered by T11. This test asserts the safety guard works:
+    # Alpha must NOT reply to Bravo's direct message.
+    marker = send(to="cc-alpha", text="Direct cc->cc test. Reply with ACK-06.",
+                  frm="cc-bravo")
+    time.sleep(8)  # give bot ample time to process and not reply
+    replies = [m for m in msgs_after(marker)
+               if m["from"] == "cc-alpha"
+               and "ACK-06" in m.get("text", "").upper()]
+    if replies:
+        raise TestFail(f"alpha replied to direct cc->cc (should be muted): "
+                       f"{[m['text'] for m in replies]}")
+    print("  alpha correctly did not reply to direct cc->cc ✓")
 
 @test("07-message-ids-unique-after-broadcast")
 def t07():
@@ -304,9 +313,21 @@ def main():
         print(f"PREFLIGHT FAIL: {e}")
         sys.exit(2)
 
-    for fn in [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11]:
+    # Cooldown + [RESET] marker between tests. The marker is broadcast so
+    # broadcast-thread context windows include it (pushing old PONG-XX msgs
+    # out of the bot's HISTORY_LIMIT window). The sleep lets in-flight bot
+    # replies from the previous test land before the next marker is sent.
+    def cooldown():
+        post("/api/send", {"to": "all",
+                            "text": "[RESET] (next test starting; ignore prior context)",
+                            "from": "you"})
+        time.sleep(15)
+
+    tests = [t01, t02, t03, t04, t05, t06, t07, t08, t09, t10, t11]
+    for i, fn in enumerate(tests):
+        if i > 0:
+            cooldown()
         fn()
-        time.sleep(1)  # small pause so bot poll-cycle doesn't merge tests
 
     line("=")
     print(f"RESULT: {len(PASSED)} passed, {len(FAILED)} failed")
