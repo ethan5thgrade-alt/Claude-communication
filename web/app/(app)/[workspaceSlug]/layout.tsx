@@ -7,8 +7,9 @@ export default async function WorkspaceLayout({
   params,
 }: {
   children: React.ReactNode
-  params: { workspaceSlug: string }
+  params: Promise<{ workspaceSlug: string }>
 }) {
+  const { workspaceSlug } = await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect("/login")
@@ -16,7 +17,7 @@ export default async function WorkspaceLayout({
   const { data: workspace } = await supabase
     .from("workspaces")
     .select("id, slug, name, plan, owner_id")
-    .eq("slug", params.workspaceSlug)
+    .eq("slug", workspaceSlug)
     .single()
   if (!workspace) notFound()
 

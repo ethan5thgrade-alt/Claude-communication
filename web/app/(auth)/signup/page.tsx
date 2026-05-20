@@ -29,7 +29,7 @@ export default function SignupPage() {
   return (
     <div>
       <h1 className="font-display text-2xl font-semibold mb-2">Create your account</h1>
-      <p className="text-sm text-text-muted mb-6">Free forever, up to 2 Claudes. No credit card.</p>
+      <p className="text-sm text-text-muted mb-6">2 instances free forever. No credit card.</p>
       <form onSubmit={submit} className="space-y-3">
         <input
           type="email"
@@ -53,7 +53,7 @@ export default function SignupPage() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full rounded-full bg-gold px-4 py-2.5 text-sm font-semibold text-bg shadow-pop hover:bg-gold-bright disabled:opacity-50"
+          className="w-full rounded-sm bg-gold px-4 py-2.5 text-sm font-medium text-bg hover:opacity-95 disabled:opacity-50 transition-opacity"
         >
           {loading ? "Creating…" : "Create account"}
         </button>

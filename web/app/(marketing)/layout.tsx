@@ -5,34 +5,63 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-40 border-b border-border bg-bg/80 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
           <Link href="/" aria-label="Mesh home">
             <Wordmark />
           </Link>
-          <nav className="flex items-center gap-2 text-sm text-text-muted">
-            <Link href="/pricing" className="px-3 py-2 hover:text-text transition-colors">Pricing</Link>
-            <Link href="/blog"    className="px-3 py-2 hover:text-text transition-colors">Blog</Link>
-            <Link href="/login"   className="px-3 py-2 hover:text-text transition-colors">Log in</Link>
+          <nav className="flex items-center gap-1 text-sm text-text-muted">
+            <Link href="/docs"       className="px-3 py-2 hover:text-text transition-colors">Docs</Link>
+            <Link href="/pricing"    className="px-3 py-2 hover:text-text transition-colors">Pricing</Link>
+            <Link href="/changelog"  className="px-3 py-2 hover:text-text transition-colors">Changelog</Link>
+            <a href="https://github.com/ethan5thgrade-alt/Claude-communication"
+               className="px-3 py-2 hover:text-text transition-colors">GitHub</a>
+            <Link href="/login"      className="px-3 py-2 hover:text-text transition-colors">Log in</Link>
             <Link
               href="/signup"
-              className="ml-2 inline-flex items-center rounded-full bg-gold px-4 py-2 text-sm font-semibold text-bg hover:bg-gold-bright transition-colors"
+              className="ml-2 inline-flex items-center rounded-sm border border-gold px-3 py-1.5 text-sm text-gold hover:bg-gold hover:text-bg transition-colors"
             >
-              Start free
+              Sign up
             </Link>
           </nav>
         </div>
       </header>
       <main className="flex-1">{children}</main>
-      <footer className="border-t border-border py-10 text-sm text-text-muted">
-        <div className="mx-auto max-w-6xl px-6 flex flex-wrap items-center justify-between gap-4">
-          <div>© {new Date().getFullYear()} Mesh — Made for developers who take AI seriously.</div>
-          <div className="flex gap-5">
-            <Link href="/privacy" className="hover:text-text">Privacy</Link>
-            <Link href="/terms"   className="hover:text-text">Terms</Link>
-            <a href="https://github.com/ethan5thgrade-alt/Claude-communication" className="hover:text-text">GitHub</a>
-          </div>
+      <footer className="border-t border-border py-12 text-sm text-text-muted">
+        <div className="mx-auto grid max-w-6xl px-6 gap-10 md:grid-cols-4">
+          <FooterCol heading="Product" links={[
+            ["Dashboard", "/login"], ["Pricing", "/pricing"], ["Changelog", "/changelog"], ["Roadmap", "/roadmap"],
+          ]}/>
+          <FooterCol heading="Docs" links={[
+            ["Getting started", "/docs"], ["API reference", "/docs/api"], ["connect.py", "/docs/connect"], ["Self-hosting", "/docs/self-host"],
+          ]}/>
+          <FooterCol heading="Company" links={[
+            ["About", "/about"], ["Blog", "/blog"], ["Privacy", "/privacy"], ["Terms", "/terms"],
+          ]}/>
+          <FooterCol heading="Links" links={[
+            ["GitHub", "https://github.com/ethan5thgrade-alt/Claude-communication"],
+            ["Discord", "https://discord.gg/"],
+            ["X", "https://x.com/"],
+          ]}/>
+        </div>
+        <div className="mx-auto mt-12 max-w-6xl px-6 text-xs text-text-muted">
+          <span className="font-mono">mesh — getmesh.dev</span>
         </div>
       </footer>
+    </div>
+  )
+}
+
+function FooterCol({ heading, links }: { heading: string; links: [string, string][] }) {
+  return (
+    <div>
+      <div className="font-mono text-xs uppercase tracking-widest text-text-muted mb-3">{heading}</div>
+      <ul className="space-y-2">
+        {links.map(([label, href]) => (
+          <li key={label}>
+            <Link href={href} className="text-text hover:text-text-muted transition-colors">{label}</Link>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

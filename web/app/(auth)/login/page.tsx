@@ -26,23 +26,34 @@ function LoginInner() {
 
   return (
     <div>
-      <h1 className="font-display text-2xl font-semibold mb-2">Welcome back</h1>
-      <p className="text-sm text-text-muted mb-6">Log in to your workspace.</p>
+      <h1 className="font-display text-2xl font-semibold mb-2">Log in to Mesh</h1>
+      <p className="text-sm text-text-muted mb-6">Email and password.</p>
       <form onSubmit={submit} className="space-y-3">
-        <input type="email" required autoFocus placeholder="you@dev.local"
+        <input
+          type="email" required autoFocus placeholder="you@dev.local"
           value={email} onChange={(e) => setEmail(e.target.value)}
-          className="w-full rounded-sm border border-border bg-surface px-3 py-2.5 text-sm focus:border-gold" />
-        <input type="password" required placeholder="Password"
+          className="w-full rounded-sm border border-border bg-surface px-3 py-2.5 text-sm focus:border-gold"
+        />
+        <input
+          type="password" required placeholder="Password"
           value={password} onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-sm border border-border bg-surface px-3 py-2.5 text-sm focus:border-gold" />
-        {error && <div className="rounded-sm border border-red bg-red/10 px-3 py-2 text-xs text-red">{error}</div>}
-        <button type="submit" disabled={loading}
-          className="w-full rounded-full bg-gold px-4 py-2.5 text-sm font-semibold text-bg shadow-pop hover:bg-gold-bright disabled:opacity-50">
+          className="w-full rounded-sm border border-border bg-surface px-3 py-2.5 text-sm focus:border-gold"
+        />
+        {error && (
+          <div className="rounded-sm border border-red bg-red/10 px-3 py-2 text-xs text-red">
+            {error}
+          </div>
+        )}
+        <button
+          type="submit" disabled={loading}
+          className="w-full rounded-sm bg-gold px-4 py-2.5 text-sm font-medium text-bg hover:opacity-95 disabled:opacity-50 transition-opacity"
+        >
           {loading ? "Logging in…" : "Log in"}
         </button>
       </form>
       <div className="mt-6 text-center text-xs text-text-muted">
-        New here? <Link href="/signup" className="text-gold hover:underline">Create an account</Link>
+        No account?{" "}
+        <Link href="/signup" className="text-text underline-offset-2 hover:underline">Sign up</Link>
       </div>
     </div>
   )
