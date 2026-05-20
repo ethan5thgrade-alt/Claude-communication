@@ -37,6 +37,11 @@ INSTANCE_PORT = 8766
 CURRENT_SCHEMA_VERSION = 2
 DEFAULT_BACKUP_INTERVAL_SECONDS = 86400  # 24h
 MAX_DATED_BACKUPS = 7
+# Pruning caps. Daily backups in state.json.YYYY-MM-DD.bak preserve full
+# history; in-memory state stays bounded so /api/state and JSON writes
+# stay snappy. Triggered only when length exceeds 1.5x the cap.
+MAX_MESSAGES_IN_STATE = 2000
+MAX_AUDIT_IN_STATE = 1000
 # mDNS / Zeroconf service type for agent-mesh broker advertisement.
 MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 DEFAULT_PLUGINS_DIR = Path.home() / ".claude" / "plugins" / "cache"
@@ -345,9 +350,22 @@ class Broker:
             # persist post-migration state on next opportunity
             self.schedule_write()
 
+    def _prune_state_inplace(self):
+        """Trim noisy lists down to their caps so state.json stays bounded.
+        Daily backups preserve full history, so this is non-destructive in
+        practice. Only acts when a list exceeds 1.5x its cap, to avoid
+        churning on every write."""
+        msgs = self.state.get("messages", [])
+        if len(msgs) > int(MAX_MESSAGES_IN_STATE * 1.5):
+            self.state["messages"] = msgs[-MAX_MESSAGES_IN_STATE:]
+        audit = self.state.get("audit", [])
+        if len(audit) > int(MAX_AUDIT_IN_STATE * 1.5):
+            self.state["audit"] = audit[-MAX_AUDIT_IN_STATE:]
+
     async def _do_write(self):
         await asyncio.sleep(0.5)
         try:
+            self._prune_state_inplace()
             tmp = self.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
                 json.dump(self.state, f, indent=2, default=str)
@@ -2123,6 +2141,51 @@ class Broker:
             memory = self.state["memory"]
         return self._json_response({"memory": memory})
 
+    # ---- read endpoints for primitives advertised in connect.py helpers -----
+    # Mirror the http_tasks/http_memory pattern: optional ?room= filter, plus
+    # a ?limit= for the noisier collections (audit, messages). These are pure
+    # reads with no side effects.
+    def _list_filter(self, key, room=None, limit=None, tail=True):
+        items = self.state.get(key, [])
+        if room:
+            items = [x for x in items if x.get("room", DEFAULT_ROOM) == room]
+        if limit:
+            try:
+                n = max(1, int(limit))
+            except Exception:
+                n = None
+            if n:
+                items = items[-n:] if tail else items[:n]
+        return items
+
+    async def http_approvals(self, request):
+        room = request.query.get("room") or None
+        return self._json_response(
+            {"approvals": self._list_filter("approvals", room=room)})
+
+    async def http_votes(self, request):
+        room = request.query.get("room") or None
+        return self._json_response(
+            {"votes": self._list_filter("votes", room=room)})
+
+    async def http_flows(self, request):
+        room = request.query.get("room") or None
+        return self._json_response(
+            {"flows": self._list_filter("flows", room=room)})
+
+    async def http_audit(self, request):
+        room = request.query.get("room") or None
+        limit = request.query.get("limit") or 200
+        return self._json_response(
+            {"audit": self._list_filter("audit", room=room, limit=limit)})
+
+    async def http_messages(self, request):
+        # Read-only list. POSTing a message still goes through /api/send.
+        room = request.query.get("room") or None
+        limit = request.query.get("limit") or 200
+        return self._json_response(
+            {"messages": self._list_filter("messages", room=room, limit=limit)})
+
     async def http_post_task(self, request):
         try:
             body = await request.json()
@@ -2324,6 +2387,11 @@ class Broker:
         app.router.add_get("/api/instances", self.http_instances)
         app.router.add_get("/api/tasks", self.http_tasks)
         app.router.add_get("/api/memory", self.http_memory)
+        app.router.add_get("/api/approvals", self.http_approvals)
+        app.router.add_get("/api/votes", self.http_votes)
+        app.router.add_get("/api/flows", self.http_flows)
+        app.router.add_get("/api/audit", self.http_audit)
+        app.router.add_get("/api/messages", self.http_messages)
         app.router.add_post("/api/task", self.http_post_task)
         app.router.add_post("/api/memory", self.http_post_memory)
         app.router.add_get("/api/plugins", self.http_plugins)

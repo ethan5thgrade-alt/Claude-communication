@@ -104,11 +104,16 @@ while [ "$turns_taken" -lt "$MAX_TURNS" ]; do
         curl -sf "${BASE}/api/status" \
             ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
         | python3 -c "
-import json, sys, pathlib
+import json, sys, pathlib, datetime
 me = '$MY_ID'
+# Skip msgs older than this when we first see them — prevents the bot from
+# replying to stale backlog if it ever lags behind (the symptom hypothesised
+# for C2: stale trigger picked up while a newer prompt sits in context).
+STALE_SECONDS = 120
 seen = set(pathlib.Path('$SEEN_FILE').read_text().splitlines())
 data = json.load(sys.stdin)
-new = []
+now = datetime.datetime.now(datetime.timezone.utc)
+new, stale_seen = [], []
 for m in data.get('messages', []):
     mid = m.get('id', '')
     if not mid or mid in seen:
@@ -124,7 +129,21 @@ for m in data.get('messages', []):
         continue
     if to not in (me, 'all'):
         continue
+    ts = m.get('ts', '')
+    try:
+        age = (now - datetime.datetime.fromisoformat(
+            ts.replace('Z','+00:00'))).total_seconds()
+    except Exception:
+        age = 0
+    if age > STALE_SECONDS:
+        stale_seen.append(mid)
+        continue
     new.append(m)
+# Mark stale msgs as seen so we don't re-evaluate them every poll.
+if stale_seen:
+    seen.update(stale_seen)
+    pathlib.Path('$SEEN_FILE').write_text(
+        '\n'.join(sorted(i for i in seen if i)) + '\n')
 print(json.dumps(new))
 "
     ) || continue
