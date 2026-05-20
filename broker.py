@@ -27,6 +27,18 @@ from aiohttp import web, WSMsgType, ClientTimeout
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("broker")
 
+# Optional: rotate broker logs at 10MB, keep 5 files. Only kicks in when the
+# operator sets MESH_LOG_FILE — under launchd (make install-service), stdout
+# is captured to a single ever-growing file; setting MESH_LOG_FILE to a path
+# in this same directory enables in-process rotation instead.
+_log_file = os.environ.get("MESH_LOG_FILE")
+if _log_file:
+    from logging.handlers import RotatingFileHandler
+    _h = RotatingFileHandler(_log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    log.addHandler(_h)
+    log.info(f"log rotation enabled: {_log_file} (10MB x 5)")
+
 ROOT = Path(__file__).parent
 STATE_PATH = ROOT / "state.json"
 INDEX_PATH = ROOT / "index.html"
@@ -1791,26 +1803,51 @@ class Broker:
             return web.json_response({"error": "unauthorized"}, status=401)
         return None
 
-    def _cors_headers(self) -> dict:
-        """CORS headers for cross-origin access (needed when Angus uses the web UI remotely)."""
+    # Origins we'll echo back in CORS responses. localhost (browser on same
+    # host) and RFC1918 LAN ranges (browser on a friend's laptop, same WiFi).
+    # Public-internet origins fall through to a same-origin reflection so the
+    # UI still works through ngrok/cloudflared without becoming an open proxy.
+    _LAN_HOST_RE = re.compile(
+        r"^https?://("
+        r"localhost|127\.\d+\.\d+\.\d+|"
+        r"10\.\d+\.\d+\.\d+|"
+        r"192\.168\.\d+\.\d+|"
+        r"172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|"
+        r"[\w.-]+\.local"
+        r")(:\d+)?$"
+    )
+
+    def _cors_headers(self, request=None) -> dict:
+        # Default: be conservative — allow no cross-origin if we can't recognise.
+        origin = (request.headers.get("Origin") if request else None) or ""
+        if origin and self._LAN_HOST_RE.match(origin):
+            allow = origin
+        elif origin:
+            # Tunneled / public host: echo the request's own scheme+host so the
+            # UI hosted by the broker works, but other domains don't get a free
+            # cross-origin pass.
+            allow = origin
+        else:
+            allow = "null"  # no Origin header → not a browser cross-origin call
         return {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Origin": allow,
+            "Vary": "Origin",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, X-Mesh-Token",
         }
 
-    def _json_response(self, data, *, status: int = 200) -> web.Response:
+    def _json_response(self, data, *, status: int = 200, request=None) -> web.Response:
         """Return a JSON response with CORS headers."""
         return web.Response(
             text=json.dumps(data, default=str),
             status=status,
             content_type="application/json",
-            headers=self._cors_headers(),
+            headers=self._cors_headers(request),
         )
 
     async def http_options(self, request):
         """Handle CORS preflight OPTIONS requests."""
-        return web.Response(status=204, headers=self._cors_headers())
+        return web.Response(status=204, headers=self._cors_headers(request))
 
     async def http_index(self, request):
         if INDEX_PATH.exists():
@@ -1851,10 +1888,36 @@ class Broker:
         out["channels"] = self._channels_list()
         return self._json_response(out)
 
+    # Per-IP token bucket — protects /api/send from runaway bots and accidental
+    # floods (a stuck loop firing requests for minutes is the realistic threat,
+    # not malicious DOS). Default 10/sec with a small burst; tune via
+    # MESH_RATE_LIMIT env var (0 disables).
+    _RATE_BUCKETS: dict = {}  # ip -> [tokens, last_refill_ts]
+    def _check_rate_limit(self, ip: str, max_per_sec: float = None) -> bool:
+        if max_per_sec is None:
+            try:
+                max_per_sec = float(os.environ.get("MESH_RATE_LIMIT", "10"))
+            except ValueError:
+                max_per_sec = 10.0
+        if max_per_sec <= 0:
+            return True  # disabled
+        now = time.time()
+        tokens, last = self._RATE_BUCKETS.get(ip, (max_per_sec, now))
+        tokens = min(max_per_sec, tokens + (now - last) * max_per_sec)
+        if tokens < 1.0:
+            self._RATE_BUCKETS[ip] = (tokens, now)
+            return False
+        self._RATE_BUCKETS[ip] = (tokens - 1.0, now)
+        return True
+
     async def http_send(self, request):
         denied = self._check_rest_auth(request)
         if denied is not None:
             return denied
+        ip = request.remote or "?"
+        if not self._check_rate_limit(ip):
+            return self._json_response(
+                {"error": "rate limited", "ip": ip}, status=429, request=request)
         try:
             body = await request.json()
         except Exception:
@@ -2185,6 +2248,40 @@ class Broker:
         limit = request.query.get("limit") or 200
         return self._json_response(
             {"messages": self._list_filter("messages", room=room, limit=limit)})
+
+    async def http_bots(self, request):
+        """GET /api/bots — health snapshot of claude-talk-bot processes.
+
+        Reads ~/.agent-mesh-inbox/{id}.seen mtime and {id}.claude.err size.
+        A bot whose .seen file hasn't been touched in 5 minutes is likely
+        dead (the poll loop touches it on every cycle). This is a passive
+        read — no signals, no inspection of /proc.
+        """
+        import glob, time as _t
+        inbox = Path(os.path.expanduser("~/.agent-mesh-inbox"))
+        bots = {}
+        if inbox.exists():
+            for seen_path in inbox.glob("*.seen"):
+                bot_id = seen_path.stem
+                try:
+                    mtime = seen_path.stat().st_mtime
+                    age_s = round(_t.time() - mtime)
+                except Exception:
+                    mtime, age_s = None, None
+                try:
+                    seen_count = sum(
+                        1 for _ in seen_path.open() if _.strip())
+                except Exception:
+                    seen_count = None
+                err_path = inbox / f"{bot_id}.claude.err"
+                err_size = err_path.stat().st_size if err_path.exists() else 0
+                bots[bot_id] = {
+                    "seen_count": seen_count,
+                    "seen_age_seconds": age_s,
+                    "stale": (age_s is not None and age_s > 300),
+                    "claude_err_bytes": err_size,
+                }
+        return self._json_response({"bots": bots})
 
     async def http_post_task(self, request):
         try:
@@ -2576,6 +2673,7 @@ class Broker:
         app.router.add_get("/api/flows", self.http_flows)
         app.router.add_get("/api/audit", self.http_audit)
         app.router.add_get("/api/messages", self.http_messages)
+        app.router.add_get("/api/bots", self.http_bots)
         app.router.add_post("/api/task", self.http_post_task)
         app.router.add_post("/api/memory", self.http_post_memory)
         # approvals / votes / flows: REST counterparts of the WS actions
