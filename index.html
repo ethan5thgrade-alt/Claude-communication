@@ -1499,8 +1499,8 @@ function fmtTime(ts) {
 }
 
 function fmtDate(ts) {
-  if (!ts) return '';
-  const d = new Date(ts * 1000);
+  const d = _toDate(ts);
+  if (!d) return '';
   return d.toISOString().slice(0,19).replace('T',' ');
 }
 
@@ -2840,7 +2840,7 @@ function renderAudit() {
     pill.style.borderColor = agentColor(r.agent);
     ag.appendChild(pill);
     tr.appendChild(ag);
-    tr.appendChild(el('td', {text: r.action || ''}));
+    tr.appendChild(el('td', {text: r.event_type || r.action || ''}));
     tr.appendChild(el('td', {cls: 'detail', text: r.detail || ''}));
     body.appendChild(tr);
   }
