@@ -1,6 +1,6 @@
-# RankForge — Groups 1 & 2
+# RankForge — Groups 1, 2 & 3
 
-A working TypeScript implementation of agents **001–022** of the 300-agent
+A working TypeScript implementation of agents **001–038** of the 300-agent
 RankForge SEO automation system (full spec in
 [../docs/rankforge/](../docs/rankforge/)).
 
@@ -11,8 +11,13 @@ RankForge SEO automation system (full spec in
   technical SEO auditor, JS-SEO analyzer, CWV estimator, schema inspector,
   content-quality analyzer, competitor intel, architecture mapper, content
   fingerprinter, speed auditor, redirect auditor.
+- **Group 3 (023–038)** — Keyword Intelligence: keyword orchestrator, seed
+  extractor, AI expander, long-tail miner, question miner, local-keyword
+  agent, competitor-gap finder, intent classifier, difficulty scorer,
+  volume estimator, cluster builder, seasonal detector, trend spotter,
+  voice optimizer, PAA miner, performance tracker.
 
-The other 26 groups build on top.
+The other 25 groups build on top.
 
 ## What's here
 
