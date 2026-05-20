@@ -234,8 +234,8 @@ class Broker:
             sha = result.stdout.strip()
             if result.returncode == 0 and sha:
                 return sha
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         return "unknown"
 
     def uptime_seconds(self) -> float:
@@ -302,8 +302,8 @@ class Broker:
             log.warning(f"Corrupt state.json ({e}); backing up and starting fresh")
             try:
                 shutil.copy(self.state_path, self.state_path.with_suffix(".json.bak"))
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("silently swallowed exception: %r", e)
             self.state = empty_state()
             return
 
@@ -437,8 +437,8 @@ class Broker:
                 self.audit("system", "backup_pruned",
                            ", ".join(p.name for p in deleted))
                 self.schedule_write()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("silently swallowed exception: %r", e)
         return deleted
 
     async def _backup_loop(self):
@@ -949,12 +949,12 @@ class Broker:
                                 "type": "auth_failed",
                                 "reason": "bad token",
                             }))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
                         try:
                             await ws.close()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
                         return
                     instance_id = msg.get("id")
                     if not instance_id:
@@ -970,8 +970,8 @@ class Broker:
                         if existing and existing.get("ws") is not ws:
                             try:
                                 await existing["ws"].close()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug("silently swallowed exception: %r", e)
 
                         self.instances[instance_id] = {
                             "ws": ws,
@@ -1008,8 +1008,8 @@ class Broker:
                     }
                     try:
                         await ws.send(json.dumps(init_payload, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
 
                     # send tasks init (focus on this instance's tasks in this room)
                     my_tasks = [t for t in self.state["tasks"]
@@ -1022,8 +1022,8 @@ class Broker:
                             "tasks": my_tasks,
                             "ts": now_iso(),
                         }, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
 
                     # deliver backlog
                     queued = list(self.backlog.get(instance_id, []))
@@ -1031,8 +1031,8 @@ class Broker:
                     if queued:
                         try:
                             await ws.send(json.dumps({"type": "backlog", "messages": queued}, default=str))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
 
                     await self.broadcast_ui({
                         "type": "instance_online",
@@ -1119,8 +1119,8 @@ class Broker:
                             "id": ap["id"],
                             "action": ap["action"],
                         }, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
                     await self.broadcast_ui({"type": "approval_request", "approval": ap})
 
                 elif mtype == "memory_write":
@@ -1239,8 +1239,8 @@ class Broker:
                                     "error": "cyclic task dependencies",
                                     "ref": title,
                                 }))
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log.debug("silently swallowed exception: %r", e)
                             continue
                         self.state["tasks"].append(task)
                         self.audit(instance_id, "task_create", f"{tid} -> {assignee or 'unassigned'}")
@@ -1288,8 +1288,8 @@ class Broker:
                                 "type": "error",
                                 "error": "vote_create requires question and >=2 options",
                             }))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
                         continue
                     options = [str(o) for o in options]
                     threshold = msg.get("threshold")
@@ -1322,8 +1322,8 @@ class Broker:
                             "question": question,
                             "options": list(options),
                         }, default=str))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("silently swallowed exception: %r", e)
                     await self.state_update({"votes": self.state["votes"]})
                     # notify other instances so they can cast
                     await self.broadcast_instances({
@@ -2509,25 +2509,25 @@ class Broker:
         # Unregister mDNS so we stop advertising before any sockets close.
         try:
             await self._mdns_unregister()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         try:
             if self._ws_server:
                 self._ws_server.close()
                 await self._ws_server.wait_closed()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         try:
             if self._http_runner:
                 await self._http_runner.cleanup()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
         # flush pending write
         if self._write_task and not self._write_task.done():
             try:
                 await self._write_task
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("silently swallowed exception: %r", e)
         try:
             tmp = self.state_path.with_suffix(".json.tmp")
             with open(tmp, "w") as f:
@@ -2544,8 +2544,8 @@ class Broker:
                     os.close(dir_fd)
             except (OSError, AttributeError):
                 pass  # not available on all platforms (e.g. Windows)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("silently swallowed exception: %r", e)
 
 
 def local_ip() -> str:
