@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server"
 
-export default async function WorkspaceHome({ params }: { params: { workspaceSlug: string } }) {
+export default async function WorkspaceHome({ params }: { params: Promise<{ workspaceSlug: string }> }) {
+  await params
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const { data: profile } = await supabase

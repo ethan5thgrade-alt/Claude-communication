@@ -7,7 +7,7 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { updateSession } from "@/lib/supabase/middleware"
 
-const PUBLIC_PATHS = ["/", "/pricing", "/about", "/blog", "/changelog", "/login", "/signup", "/verify", "/invite"]
+const PUBLIC_PATHS = ["/", "/pricing", "/about", "/blog", "/changelog", "/docs", "/privacy", "/terms", "/login", "/signup", "/verify", "/invite"]
 const STATIC_PATHS = ["/_next", "/api", "/favicon.ico", "/og-image.png", "/manifest.json"]
 
 export async function middleware(request: NextRequest) {
@@ -18,6 +18,10 @@ export async function middleware(request: NextRequest) {
 
   if (STATIC_PATHS.some((p) => pathname.startsWith(p))) return supabaseResponse
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) return supabaseResponse
+
+  // Pre-Supabase-setup grace mode: env vars absent → no auth → let
+  // protected routes render the "Supabase not configured" placeholder.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return supabaseResponse
 
   // Everything else needs auth.
   if (!user) {

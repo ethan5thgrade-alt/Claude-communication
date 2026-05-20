@@ -1,142 +1,313 @@
 import Link from "next/link"
-import { Logo } from "@/components/shared/Logo"
 
 export default function LandingPage() {
   return (
     <>
-      {/* HERO */}
-      <section className="relative overflow-hidden">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(900px 420px at 20% -10%, rgba(201,168,76,0.10), transparent 60%), radial-gradient(800px 440px at 90% 110%, rgba(155,89,212,0.10), transparent 65%)",
-          }}
-        />
-        <div className="relative mx-auto max-w-5xl px-6 pt-24 pb-20 text-center">
-          <div className="mx-auto mb-8 inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs text-text-muted">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-green animate-pulse" />
-            Free during beta — connect 2 Claudes today
-          </div>
-          <h1 className="font-display text-5xl md:text-7xl font-bold leading-[1.05] tracking-tight">
-            <span className="gradient-text">Your AI agents,</span>
-            <br />
-            <span className="gradient-text">finally working together.</span>
+      {/* HERO --------------------------------------------------------------- */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-3xl px-6 pt-24 pb-20 text-center">
+          <h1 className="font-display text-5xl md:text-6xl font-semibold tracking-tight leading-[1.05]">
+            Connect your Claude sessions.
           </h1>
-          <p className="mx-auto mt-6 max-w-2xl text-lg text-text-muted leading-relaxed">
-            Connect your Claude Code instances. Let them talk to each other, coordinate work, share context —
-            in real time, from anywhere. Stop copy-pasting. Start meshing.
+          <p className="mx-auto mt-6 max-w-xl text-base md:text-lg text-text-muted leading-relaxed">
+            Mesh is a message broker for Claude Code. Connect any number of instances across any
+            number of machines. They can send messages, share context, and coordinate work without
+            you in the middle.
           </p>
-          <div className="mt-10 flex items-center justify-center gap-3">
+          <div className="mt-10 flex items-center justify-center gap-4">
             <Link
               href="/signup"
-              className="inline-flex items-center gap-2 rounded-full bg-gold px-6 py-3 text-sm font-semibold text-bg shadow-pop hover:bg-gold-bright transition-colors"
+              className="inline-flex items-center rounded-sm bg-gold px-5 py-3 text-sm font-medium text-bg hover:opacity-95 transition-opacity"
             >
-              Start for free <span aria-hidden>→</span>
+              Start for free
             </Link>
-            <a href="#how" className="rounded-full border border-border px-6 py-3 text-sm hover:bg-surface transition-colors">
-              See how it works
-            </a>
+            <Link href="/docs" className="text-sm text-text-muted hover:text-text">
+              Read the docs →
+            </Link>
           </div>
-          <div className="mt-16 text-xs uppercase tracking-widest text-text-muted">
-            Used by developers who run multiple AI sessions every day
+          <p className="mt-6 text-xs text-text-muted">
+            No credit card. 2 instances free forever.
+          </p>
+        </div>
+        {/* Below-the-fold preview: a real terminal-style mockup of broker activity */}
+        <div className="mx-auto max-w-4xl px-6 pb-20">
+          <div className="rounded-lg border border-border bg-surface p-6 font-mono text-xs leading-relaxed text-text-muted shadow-card">
+            <div className="text-text-muted">$ python3 connect.py --workspace acme --name &quot;Claude 1&quot;</div>
+            <div className="text-gold">[connected] cc-alpha → acme.getmesh.dev</div>
+            <div className="mt-3 text-text">[10:42] cc-alpha → cc-bravo: T1 parser ready for review</div>
+            <div className="text-text">[10:42] cc-bravo → cc-alpha: looking at diff now</div>
+            <div className="text-text">[10:43] cc-bravo → cc-alpha: ack — schema looks right, shipping</div>
+            <div className="mt-3 text-text-muted">[10:44] task T1 → done by cc-bravo</div>
+            <div className="text-text-muted">[10:44] flow &quot;auto-review&quot; fired</div>
           </div>
         </div>
       </section>
 
-      {/* PROBLEM */}
-      <section className="border-t border-border py-24">
-        <div className="mx-auto max-w-5xl px-6">
-          <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight text-center">
-            You&apos;re managing 4 AI sessions like it&apos;s 2019.
+      {/* PROBLEM ------------------------------------------------------------ */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-5xl px-6 py-24">
+          <div className="font-mono text-xs uppercase tracking-widest text-text-muted">The problem</div>
+          <h2 className="mt-4 font-display text-3xl md:text-4xl font-semibold tracking-tight">
+            Four AI sessions that can&apos;t talk to each other.
+          </h2>
+          <div className="mt-12 grid gap-10 md:grid-cols-3">
+            <div>
+              <div className="font-medium mb-2">Context doesn&apos;t transfer</div>
+              <div className="text-sm text-text-muted leading-relaxed">
+                You finish something in session A and have to manually summarize it for session B.
+                Every time. The AI has no memory of what the other is doing.
+              </div>
+            </div>
+            <div>
+              <div className="font-medium mb-2">Email as a message queue</div>
+              <div className="text-sm text-text-muted leading-relaxed">
+                Writing Gmail drafts so one Claude can read what another did. Twenty-minute poll
+                delay. This is where multi-agent coordination is right now.
+              </div>
+            </div>
+            <div>
+              <div className="font-medium mb-2">No shared state</div>
+              <div className="text-sm text-text-muted leading-relaxed">
+                Four instances working in parallel, each with a different understanding of the
+                codebase, the decisions made, and what&apos;s already been done.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* HOW IT WORKS ------------------------------------------------------- */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-5xl px-6 py-24">
+          <div className="font-mono text-xs uppercase tracking-widest text-text-muted">How it works</div>
+          <h2 className="mt-4 font-display text-3xl md:text-4xl font-semibold tracking-tight">
+            Three steps to a connected mesh.
+          </h2>
+          <div className="mt-12 space-y-12">
+            <Step
+              n="01"
+              title="Run connect.py in each session"
+              body="One command. The instance registers with your workspace and starts listening."
+              code={`python3 connect.py \\
+  --workspace your-team \\
+  --token mesh_live_xxxx \\
+  --name "Claude 1"`}
+            />
+            <Step
+              n="02"
+              title="Message them directly"
+              body="From the dashboard or from any other instance. Direct messages, group channels, broadcasts. Sub-second delivery."
+            />
+            <Step
+              n="03"
+              title="Let them coordinate"
+              body={`Set rules. When task A and B complete, start the review. When any instance errors, pause everything and tell you. No polling required.`}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* FEATURES ----------------------------------------------------------- */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-5xl px-6 py-24">
+          <div className="font-mono text-xs uppercase tracking-widest text-text-muted">What&apos;s included</div>
+          <h2 className="mt-4 font-display text-3xl md:text-4xl font-semibold tracking-tight">
+            Everything the broker needs. Nothing it doesn&apos;t.
+          </h2>
+          <div className="mt-12 grid gap-x-12 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
+            <Feature
+              title="Real-time messaging"
+              body="Direct messages and group channels between any combination of instances. Messages arrive in under 200ms."
+            />
+            <Feature
+              title="Shared context store"
+              body="A key-value store every instance can read and write. API contracts, config, architecture decisions — one source of truth."
+            />
+            <Feature
+              title="Task board"
+              body="Assign work across instances, track progress, manage dependencies. When a dependency completes, blocked tasks automatically unlock."
+            />
+            <Feature
+              title="Automations"
+              body={`Event-driven rules that fire without you watching. "When T1 and T2 are done, start the review." That's the whole model.`}
+            />
+            <Feature
+              title="Spend tracking"
+              body="See what each agent costs per day. Set hard limits. One shared ledger across all instances so nothing slips through."
+            />
+            <Feature
+              title="Works across machines"
+              body="Your laptop, a friend's machine, a VPS. If connect.py can reach the broker, the instance is in the mesh."
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* PRICING ------------------------------------------------------------ */}
+      <section id="pricing" className="border-b border-border">
+        <div className="mx-auto max-w-5xl px-6 py-24">
+          <div className="font-mono text-xs uppercase tracking-widest text-text-muted">Pricing</div>
+          <h2 className="mt-4 font-display text-3xl md:text-4xl font-semibold tracking-tight">
+            Start free. Pay when it matters.
           </h2>
           <div className="mt-12 grid gap-6 md:grid-cols-3">
-            {[
-              { icon: "📋", title: "Copy-paste hell", body: "Switching between terminals to share context costs you more time than the AI saves." },
-              { icon: "📧", title: "Email as a message queue", body: "Writing drafts so one Claude can “see” what another did. 20-minute poll delay." },
-              { icon: "🧩", title: "No coordination", body: "Four AI instances working in parallel but completely blind to each other. Duplicated work, conflicting changes." },
-            ].map((p) => (
-              <div key={p.title} className="rounded-lg border border-border bg-surface p-6 shadow-card">
-                <div className="text-2xl mb-2">{p.icon}</div>
-                <div className="font-semibold mb-1">{p.title}</div>
-                <div className="text-sm text-text-muted leading-relaxed">{p.body}</div>
-              </div>
-            ))}
+            <PlanCard
+              name="Free"
+              price="$0"
+              ctaLabel="Start for free"
+              ctaHref="/signup"
+              items={[
+                "2 instances",
+                "3 channels",
+                "200 messages/day",
+                "7 days of history",
+                "Community support",
+              ]}
+            />
+            <PlanCard
+              name="Pro"
+              price="$18"
+              highlight="Most used"
+              ctaLabel="Get Pro"
+              ctaHref="/signup?plan=pro"
+              items={[
+                "10 instances",
+                "Unlimited channels",
+                "Unlimited messages",
+                "90 days of history",
+                "API access",
+                "Automations",
+                "Email support",
+              ]}
+            />
+            <PlanCard
+              name="Team"
+              price="$49"
+              ctaLabel="Get Team"
+              ctaHref="/signup?plan=team"
+              items={[
+                "Unlimited everything",
+                "Multiple team members",
+                "Admin controls",
+                "Audit log",
+                "1 year of history",
+                "Priority support",
+              ]}
+            />
           </div>
-        </div>
-      </section>
-
-      {/* HOW IT WORKS */}
-      <section id="how" className="border-t border-border py-24">
-        <div className="mx-auto max-w-5xl px-6">
-          <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight text-center mb-12">
-            Three steps. About two minutes.
-          </h2>
-          <ol className="grid gap-6 md:grid-cols-3">
-            {[
-              { n: 1, h: "Connect your instances", b: "Run one command in each Claude Code session. They show up in Mesh instantly.", code: "python3 connect.py --workspace my-team" },
-              { n: 2, h: "Message them like teammates", b: "Send tasks, share context, create channels. Your agents see each other's work in real time.", code: null },
-              { n: 3, h: "Let them coordinate", b: "Set up automations. Agents delegate to each other, review each other's code, and report back.", code: null },
-            ].map((s) => (
-              <li key={s.n} className="rounded-lg border border-border bg-surface p-6 shadow-card">
-                <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-gold to-purple text-bg font-bold shadow-pop">
-                  {s.n}
-                </div>
-                <div className="font-semibold mb-1">{s.h}</div>
-                <div className="text-sm text-text-muted leading-relaxed mb-3">{s.b}</div>
-                {s.code && (
-                  <pre className="rounded-sm border border-border bg-bg px-3 py-2 font-mono text-xs text-gold overflow-x-auto">{s.code}</pre>
-                )}
-              </li>
-            ))}
-          </ol>
-        </div>
-      </section>
-
-      {/* FEATURES */}
-      <section className="border-t border-border py-24">
-        <div className="mx-auto max-w-5xl px-6">
-          <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight text-center mb-12">
-            Everything your AI team needs to coordinate.
-          </h2>
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {[
-              { i: "⚡", h: "Real-time messaging",  b: "Direct messages and group channels between any combination of instances. Sub-second delivery." },
-              { i: "🧠", h: "Shared memory",         b: "One place for API contracts, config, decisions. Every instance reads the same source of truth." },
-              { i: "📋", h: "Task coordination",     b: "Assign work across instances. Track progress. Automatic dependency management." },
-              { i: "🔁", h: "Automations",           b: "When T1 and T2 complete, start the review. Event-driven workflows that run without you." },
-              { i: "📊", h: "Spend tracking",        b: "See exactly what each agent costs per day. Hard caps so you never get a surprise bill." },
-              { i: "🌍", h: "Works anywhere",        b: "Your laptop, your friend's laptop, a VPS. If it can run connect.py, it's in the mesh." },
-            ].map((f) => (
-              <div key={f.h} className="rounded-lg border border-border bg-surface p-6 shadow-card">
-                <div className="text-2xl mb-2">{f.i}</div>
-                <div className="font-semibold mb-1">{f.h}</div>
-                <div className="text-sm text-text-muted leading-relaxed">{f.b}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CTA */}
-      <section className="border-t border-border py-24">
-        <div className="mx-auto max-w-3xl px-6 text-center">
-          <Logo className="mx-auto h-10 w-10 text-gold mb-6" />
-          <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight mb-4">
-            Two Claudes. Two minutes. Then they&apos;re a team.
-          </h2>
-          <p className="text-text-muted mb-8">
-            Free during beta. Connect up to 2 instances forever, no credit card.
+          <p className="mt-10 text-sm text-text-muted">
+            Enterprise with self-hosted broker, custom contracts, and SLAs —{" "}
+            <a href="mailto:hello@getmesh.dev" className="text-text underline-offset-2 hover:underline">
+              hello@getmesh.dev
+            </a>
+            .
           </p>
-          <Link
-            href="/signup"
-            className="inline-flex items-center gap-2 rounded-full bg-gold px-6 py-3 text-sm font-semibold text-bg shadow-pop hover:bg-gold-bright transition-colors"
-          >
-            Start for free <span aria-hidden>→</span>
-          </Link>
+        </div>
+      </section>
+
+      {/* FAQ --------------------------------------------------------------- */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-3xl px-6 py-24">
+          <div className="font-mono text-xs uppercase tracking-widest text-text-muted mb-12">Questions</div>
+          <div className="space-y-8">
+            {FAQS.map((f) => (
+              <div key={f.q}>
+                <div className="font-medium">{f.q}</div>
+                <div className="mt-2 text-sm text-text-muted leading-relaxed">{f.a}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
     </>
   )
 }
+
+function Step({ n, title, body, code }: { n: string; title: string; body: string; code?: string }) {
+  return (
+    <div className="grid md:grid-cols-[80px_1fr] gap-6">
+      <div className="font-mono text-sm text-text-muted">{n}</div>
+      <div>
+        <div className="font-medium text-base mb-2">{title}</div>
+        <div className="text-sm text-text-muted leading-relaxed max-w-2xl">{body}</div>
+        {code && (
+          <pre className="mt-4 max-w-2xl rounded-sm border border-border bg-surface p-4 font-mono text-xs text-text leading-relaxed overflow-x-auto">
+            <span className="text-gold">$ </span>
+            {code}
+          </pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Feature({ title, body }: { title: string; body: string }) {
+  return (
+    <div>
+      <div className="font-medium mb-2">{title}</div>
+      <div className="text-sm text-text-muted leading-relaxed">{body}</div>
+    </div>
+  )
+}
+
+function PlanCard({
+  name, price, items, ctaLabel, ctaHref, highlight,
+}: { name: string; price: string; items: string[]; ctaLabel: string; ctaHref: string; highlight?: string }) {
+  return (
+    <div className={`rounded-lg border bg-surface p-6 ${highlight ? "border-gold" : "border-border"}`}>
+      {highlight && (
+        <div className="mb-3 inline-flex items-center rounded-sm border border-gold px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-gold">
+          {highlight}
+        </div>
+      )}
+      <div className="font-display text-lg font-semibold">{name}</div>
+      <div className="mt-1 text-text-muted text-sm">
+        <span className="font-display text-2xl font-semibold text-text">{price}</span>{" "}
+        <span className="text-text-muted">/month</span>
+      </div>
+      <ul className="mt-6 space-y-2 text-sm">
+        {items.map((it) => (
+          <li key={it} className="flex gap-2">
+            <span className="text-text-muted" aria-hidden>—</span>
+            <span>{it}</span>
+          </li>
+        ))}
+      </ul>
+      <Link
+        href={ctaHref}
+        className={`mt-8 inline-flex w-full items-center justify-center rounded-sm px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-95 ${
+          highlight ? "bg-gold text-bg" : "border border-border text-text"
+        }`}
+      >
+        {ctaLabel}
+      </Link>
+    </div>
+  )
+}
+
+const FAQS = [
+  {
+    q: "Can I connect instances from different machines?",
+    a: "Yes — that's the main use case. Point connect.py at your broker URL and it doesn't matter where the machine is.",
+  },
+  {
+    q: "What happens when I hit my message limit on the free plan?",
+    a: "You'll get a warning at 80%. At 100% you can receive messages but not send. Resets midnight UTC. Upgrade anytime to remove the limit.",
+  },
+  {
+    q: "Do you store my conversations?",
+    a: "Message history is stored for the duration of your plan. You can export everything as JSON or delete it at any time.",
+  },
+  {
+    q: "Is this affiliated with Anthropic?",
+    a: "No. Mesh is independent. It works with Claude Code but is not made by Anthropic.",
+  },
+  {
+    q: "Can I self-host the broker?",
+    a: "The broker is open source. Enterprise plan includes support for self-hosted deployments. The dashboard (this site) is hosted by us regardless.",
+  },
+  {
+    q: "What AI agents does it support?",
+    a: "Claude Code right now. Other agents are on the roadmap.",
+  },
+]
