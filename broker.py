@@ -2252,6 +2252,190 @@ class Broker:
         await self.broadcast_instances({"type": "memory_write", "memory": entry}, room=room)
         return self._json_response({"ok": True, "memory": entry})
 
+    # ---- approvals / votes / flows: REST counterparts of the WS actions ----
+    # Each mirrors the equivalent WS handler so behaviour and audit lines are
+    # identical regardless of which transport the client uses.
+
+    async def http_post_approval(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        sender = (body.get("from") or "you").strip() or "you"
+        action_text = (body.get("action") or "").strip()
+        if not action_text:
+            return self._json_response({"error": "empty action"}, status=400)
+        async with self.lock:
+            ap = {
+                "id": self.next_id("AP"),
+                "from": sender,
+                "action": action_text,
+                "risk": body.get("risk", "low"),
+                "detail": body.get("detail", ""),
+                "status": "pending",
+                "ts": now_iso(),
+            }
+            self.state["approvals"].append(ap)
+            self.audit(sender, "approval_request", f"{ap['action']} (REST)")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "approval_request", "approval": ap})
+        return self._json_response({"ok": True, "approval": ap})
+
+    async def http_post_approval_respond(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        ap_id = request.match_info.get("ap_id")
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        decision = bool(body.get("approved", body.get("decision")))
+        ap = next((a for a in self.state["approvals"] if a["id"] == ap_id), None)
+        if not ap:
+            return self._json_response({"error": "approval not found"}, status=404)
+        async with self.lock:
+            ap["status"] = "approved" if decision else "rejected"
+            ap["decided_at"] = now_iso()
+            ap["decision"] = decision
+            self.audit("you", "approval_decision",
+                       f"{ap_id} requester={ap.get('from','?')} verdict={ap['status']} (REST)")
+            self.schedule_write()
+        # notify the original requester instance if connected via WS
+        try:
+            await self.send_to_instance(ap["from"], {
+                "type": "approval_decision",
+                "id": ap_id, "decision": decision, "action": ap["action"],
+            })
+        except Exception as e:
+            log.debug("approval_decision notify failed: %r", e)
+        # resolve any server-side awaiter
+        fut = self._pending_approvals.pop(ap_id, None)
+        if fut is not None and not fut.done():
+            fut.set_result(decision)
+        await self.broadcast_ui({"type": "approvals", "approvals": self.state["approvals"]})
+        return self._json_response({"ok": True, "approval": ap})
+
+    async def http_post_vote(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        question = (body.get("question") or "").strip()
+        options = body.get("options") or []
+        if not question or not isinstance(options, list) or len(options) < 2:
+            return self._json_response(
+                {"error": "vote requires question and >=2 options"}, status=400)
+        options = [str(o) for o in options]
+        threshold = body.get("threshold")
+        if threshold is not None:
+            try:
+                threshold = int(threshold)
+            except Exception:
+                threshold = None
+        created_by = (body.get("from") or "you").strip() or "you"
+        async with self.lock:
+            vid = self.next_id("V")
+            vote = {
+                "id": vid, "question": question, "options": list(options),
+                "ballots": {}, "threshold": threshold, "status": "open",
+                "winner": None, "created_by": created_by, "ts": now_iso(),
+            }
+            self.state["votes"].append(vote)
+            self.audit(created_by, "vote_create", f"{vid} q={question[:40]} (REST)")
+            self.schedule_write()
+        await self.broadcast_instances({"type": "vote_open", "vote": vote})
+        await self.broadcast_ui({"type": "votes", "votes": self.state["votes"]})
+        return self._json_response({"ok": True, "vote": vote})
+
+    async def http_post_vote_cast(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        vote_id = request.match_info.get("vote_id")
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        voter = (body.get("voter") or body.get("from") or "you").strip() or "you"
+        option = body.get("option") or body.get("choice")
+        v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
+        if not v:
+            return self._json_response({"error": "vote not found"}, status=404)
+        if v.get("status") != "open":
+            return self._json_response({"error": "vote closed"}, status=400)
+        if option not in v.get("options", []):
+            return self._json_response({"error": "invalid option"}, status=400)
+        async with self.lock:
+            v.setdefault("ballots", {})[voter] = option
+            self.audit(voter, "vote_cast", f"{vote_id}={option} (REST)")
+            self.schedule_write()
+        await self._maybe_resolve_vote(v)
+        await self.broadcast_ui({"type": "votes", "votes": self.state["votes"]})
+        return self._json_response({"ok": True, "vote": v})
+
+    async def http_post_flow(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._json_response({"error": "empty name"}, status=400)
+        async with self.lock:
+            fid = self.next_id("F")
+            flow = {
+                "id": fid, "name": name,
+                "trigger": body.get("trigger", ""),
+                "action": body.get("action") or body.get("action_desc", ""),
+                "color": body.get("color", "#888"),
+                "enabled": bool(body.get("enabled", True)),
+                "ts": now_iso(),
+            }
+            self.state["flows"].append(flow)
+            self.audit("you", "flow_create", f"{fid} (REST)")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "flows", "flows": self.state["flows"]})
+        return self._json_response({"ok": True, "flow": flow})
+
+    async def http_delete_flow(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        fid = request.match_info.get("fid")
+        before = len(self.state["flows"])
+        async with self.lock:
+            self.state["flows"] = [f for f in self.state["flows"] if f["id"] != fid]
+            removed = before - len(self.state["flows"])
+            if removed:
+                self.audit("you", "flow_delete", f"{fid} (REST)")
+                self.schedule_write()
+        await self.broadcast_ui({"type": "flows", "flows": self.state["flows"]})
+        return self._json_response({"ok": True, "removed": removed})
+
+    async def http_post_flow_fire(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        fid = request.match_info.get("fid")
+        f = next((x for x in self.state["flows"] if x["id"] == fid), None)
+        if not f:
+            return self._json_response({"error": "flow not found"}, status=404)
+        async with self.lock:
+            self.audit("you", "flow_fire", f"{fid} (REST)")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "flow_fired", "id": fid})
+        return self._json_response({"ok": True, "flow": f})
+
     # ------------------- team endpoints -------------------
     async def http_teams_create(self, request):
         """POST /api/teams — create a team, returns {team_id, invite_code, invite_url}."""
@@ -2394,6 +2578,14 @@ class Broker:
         app.router.add_get("/api/messages", self.http_messages)
         app.router.add_post("/api/task", self.http_post_task)
         app.router.add_post("/api/memory", self.http_post_memory)
+        # approvals / votes / flows: REST counterparts of the WS actions
+        app.router.add_post("/api/approval", self.http_post_approval)
+        app.router.add_post("/api/approval/{ap_id}/respond", self.http_post_approval_respond)
+        app.router.add_post("/api/vote", self.http_post_vote)
+        app.router.add_post("/api/vote/{vote_id}/cast", self.http_post_vote_cast)
+        app.router.add_post("/api/flow", self.http_post_flow)
+        app.router.add_delete("/api/flow/{fid}", self.http_delete_flow)
+        app.router.add_post("/api/flow/{fid}/fire", self.http_post_flow_fire)
         app.router.add_get("/api/plugins", self.http_plugins)
         app.router.add_get("/api/plugins/{plugin_id}", self.http_plugin_detail)
         # New endpoints: rooms and share-info
