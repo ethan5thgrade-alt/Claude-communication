@@ -17,6 +17,11 @@ jobs:
         with:
           python-version: "3.9"
 
+      - name: Install runtime dependencies
+        # README quickstart: websockets + aiohttp are required, zeroconf optional.
+        # Without these, the import-smoke step fails on `import aiohttp` (broker.py:23).
+        run: pip install websockets aiohttp
+
       - name: Python syntax check
         run: |
           python -m py_compile broker.py
