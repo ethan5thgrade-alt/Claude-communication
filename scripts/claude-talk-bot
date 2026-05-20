@@ -26,7 +26,7 @@ BUDGET="0.50"
 REPLY_TO_HUMAN=0
 REPLY_TO_AGENTS=0   # default OFF — prevents bot-to-bot loops
 BOT_CHAIN_LIMIT=4   # stop if last N msgs in thread are all bots (no human)
-HISTORY_LIMIT=10    # number of past messages to include as context
+HISTORY_LIMIT=5     # past msgs in context window — smaller = less cross-test contamination
 
 # Named persona shortcuts. "alpha" / "bravo" become a full team prompt with
 # the bot's identity, its partner, and explicit instructions to use the
@@ -45,7 +45,9 @@ Rules:
 - If the user asks you and $partner to do something together (finish a
   sentence, take turns, divide work), use the history to coordinate.
 - If the last message is from $partner, build on it rather than ignoring it.
-- Never address yourself or repeat the latest message verbatim.
+- Don't narrate your own name unnecessarily ("I am $name..."). But DO follow
+  explicit instructions to say a specific word — even if that word also
+  appears in the prompt asking you to say it.
 EOF
 }
 
@@ -162,19 +164,38 @@ for m in json.loads(sys.stdin.read()):
         orig_to=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('to',''))")
         orig_channel=$(echo "$msg_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('channel',''))")
 
+        # E2E test harness inserts [RESET] markers between tests to clear the
+        # bot's context window. Mark seen and skip (no reply, no cost).
+        if [[ "$text" == \[RESET\]* ]]; then
+            echo "[bot:${MY_ID}] skipping RESET marker $mid"
+            echo "$mid" >> "$SEEN_FILE"
+            continue
+        fi
+
         # Reply policy:
         #   sender == 'you'  (human via dashboard) -> requires --reply-to-human
         #   sender == another agent (cc-*)         -> requires --reply-to-agents
+        #                                            AND msg must carry a channel
         # Both off by default to prevent loops and accidental cost.
         if [ "$sender" = "you" ] && [ "$REPLY_TO_HUMAN" -ne 1 ]; then
             echo "[bot:${MY_ID}] skipping human message $mid (use --reply-to-human)"
             echo "$mid" >> "$SEEN_FILE"
             continue
         fi
-        if [ "$sender" != "you" ] && [ "$REPLY_TO_AGENTS" -ne 1 ]; then
-            echo "[bot:${MY_ID}] skipping agent message $mid from $sender (use --reply-to-agents)"
-            echo "$mid" >> "$SEEN_FILE"
-            continue
+        if [ "$sender" != "you" ]; then
+            if [ "$REPLY_TO_AGENTS" -ne 1 ]; then
+                echo "[bot:${MY_ID}] skipping agent message $mid from $sender (use --reply-to-agents)"
+                echo "$mid" >> "$SEEN_FILE"
+                continue
+            fi
+            # Direct cc->cc (no channel) is intentionally muted to prevent
+            # accidental loops. Agent-to-agent coordination goes through
+            # channels — see /api/channels.
+            if [ -z "$orig_channel" ]; then
+                echo "[bot:${MY_ID}] skipping direct agent message $mid from $sender (channel-only)"
+                echo "$mid" >> "$SEEN_FILE"
+                continue
+            fi
         fi
 
         echo "[bot:${MY_ID}] new message from $sender: ${text:0:80}"
