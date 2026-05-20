@@ -2,13 +2,16 @@
 // Registers Group 1 agents and starts the Grand Orchestrator's continuous loop.
 
 import { registerGroup01 } from "./agents/group01/index.ts";
+import { registerGroup02 } from "./agents/group02/index.ts";
 import { getAgent } from "./core/registry.ts";
 import { getMesh, meshEnabled } from "./core/meshBridge.ts";
 import type { GrandOrchestrator } from "./agents/group01/grandOrchestrator.ts";
 
 async function main(): Promise<void> {
-    const agents = registerGroup01();
-    console.log(`[rankforge] registered ${Object.keys(agents).length} Group-1 agents`);
+    const g1 = registerGroup01();
+    const g2 = registerGroup02();
+    const agents = { ...g1, ...g2 };
+    console.log(`[rankforge] registered ${Object.keys(g1).length} Group-1 + ${Object.keys(g2).length} Group-2 agents`);
 
     if (meshEnabled()) {
         getMesh("rankforge", "RankForge (Group 1)");

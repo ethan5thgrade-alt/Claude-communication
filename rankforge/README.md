@@ -1,13 +1,18 @@
-# RankForge — Group 1: Grand Orchestration
+# RankForge — Groups 1 & 2
 
-A working TypeScript implementation of agents 001–010 of the 300-agent
+A working TypeScript implementation of agents **001–022** of the 300-agent
 RankForge SEO automation system (full spec in
 [../docs/rankforge/](../docs/rankforge/)).
 
-This is the foundation: orchestrator, state machine, quality gate, error
-classifier, priority arbitrator, dependency DAG, resource governor, health
-monitor, human bridge, and system clock. The other 27 groups build on top
-of these.
+- **Group 1 (001–010)** — Grand Orchestration: orchestrator, state machine,
+  quality gate, error classifier, priority arbitrator, dependency DAG,
+  resource governor, health monitor, human bridge, system clock.
+- **Group 2 (011–022)** — Crawl & Deep Analysis: BFS crawler, HTML parser,
+  technical SEO auditor, JS-SEO analyzer, CWV estimator, schema inspector,
+  content-quality analyzer, competitor intel, architecture mapper, content
+  fingerprinter, speed auditor, redirect auditor.
+
+The other 26 groups build on top.
 
 ## What's here
 
