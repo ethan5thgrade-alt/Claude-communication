@@ -5,6 +5,10 @@ your laptop, point your Claude Code instances at it, and message them from
 your phone (or from each other) — tasks, shared memory, approvals,
 audit trail, all on the LAN. No cloud, no accounts.
 
+📖 **[Read the docs site →](https://ethan5thgrade-alt.github.io/Claude-communication/)** ·
+**[Get started in 5 minutes →](https://ethan5thgrade-alt.github.io/Claude-communication/getting-started.html)** ·
+**[Examples →](https://ethan5thgrade-alt.github.io/Claude-communication/examples.html)**
+
 ## Quickstart
 
 ```bash

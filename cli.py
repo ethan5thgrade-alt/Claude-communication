@@ -77,8 +77,14 @@ Usage:
   python cli.py instances
   python cli.py tasks
   python cli.py memory
+  python cli.py approvals
+  python cli.py votes
+  python cli.py flows
+  python cli.py audit [--limit N]
+  python cli.py messages [--limit N]
   python cli.py task "<title>" [--assignee <id>] [--priority <p>]
   python cli.py memorize <key> "<value>" [--type <mem_type>]
+  python cli.py token                              # generate + persist ~/.agent-mesh-token
 """
 
 
@@ -237,6 +243,49 @@ def main(argv):
             "mem_type": flags.get("type", "contract"),
         }
         _pp(_post("/api/memory", body))
+    elif cmd == "approvals":
+        _pp(_get("/api/approvals"))
+    elif cmd == "votes":
+        _pp(_get("/api/votes"))
+    elif cmd == "flows":
+        _pp(_get("/api/flows"))
+    elif cmd == "audit":
+        _, flags = _parse_flags(argv[2:], {"limit"})
+        path = "/api/audit"
+        if flags.get("limit"):
+            path += "?limit=" + flags["limit"]
+        _pp(_get(path))
+    elif cmd == "messages":
+        _, flags = _parse_flags(argv[2:], {"limit"})
+        path = "/api/messages"
+        if flags.get("limit"):
+            path += "?limit=" + flags["limit"]
+        _pp(_get(path))
+    elif cmd == "token":
+        # Generate-and-persist mode. Safe to re-run; refuses to overwrite
+        # an existing token unless --force is passed. Writing the token
+        # does NOT change broker behavior — the broker only requires
+        # X-Mesh-Token when MESH_TOKEN is set in its own env.
+        import secrets, stat
+        _, flags = _parse_flags(argv[2:], {"force"})
+        token_path = os.path.expanduser("~/.agent-mesh-token")
+        if os.path.exists(token_path) and not flags.get("force"):
+            with open(token_path) as f:
+                existing = f.read().strip()
+            print(f"token already exists at {token_path}:")
+            print(f"  {existing}")
+            print("re-run with --force=1 to rotate.")
+            return 0
+        tok = secrets.token_urlsafe(32)
+        with open(token_path, "w") as f:
+            f.write(tok + "\n")
+        os.chmod(token_path, stat.S_IRUSR | stat.S_IWUSR)
+        print(f"wrote {token_path}")
+        print(f"  {tok}")
+        print()
+        print("To enforce auth on the broker, restart it with:")
+        print(f"  MESH_TOKEN=$(cat {token_path}) python3 broker.py")
+        print("Then set the same env var for bots and connect.py.")
     else:
         print(USAGE)
         return 1

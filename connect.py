@@ -24,6 +24,10 @@ import websockets
 INSTANCE_ID = os.environ.get("INSTANCE_ID") or "cc1"
 NAME = os.environ.get("INSTANCE_NAME") or os.environ.get("NAME") or "Claude 1"
 PROJECT = os.environ.get("INSTANCE_PROJECT") or os.environ.get("PROJECT") or "OPTFINDER"
+# Optional account identity — surfaces in the dashboard so users running
+# multiple Anthropic accounts on one machine can tell instances apart.
+EMAIL = os.environ.get("INSTANCE_EMAIL") or os.environ.get("EMAIL") or ""
+ROLE = os.environ.get("INSTANCE_ROLE") or os.environ.get("ROLE") or ""
 # BROKER_URL: prefer env var. Falls through to localhost; if localhost fails on
 # the first attempt and the env var was NOT set, we'll mDNS-browse for a LAN
 # broker (see _discover_broker_url).
@@ -374,6 +378,10 @@ async def _client_loop():
                     "name": NAME,
                     "project": PROJECT,
                 }
+                if EMAIL:
+                    reg_payload["email"] = EMAIL
+                if ROLE:
+                    reg_payload["role"] = ROLE
                 if MESH_TOKEN:
                     reg_payload["token"] = MESH_TOKEN
                 await ws.send(json.dumps(reg_payload))

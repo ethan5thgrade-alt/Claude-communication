@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Python syntax check
+        run: |
+          python -m py_compile broker.py
+          python -m py_compile cli.py
+          python -m py_compile connect.py
+          find scripts tests clients -name '*.py' -print0 \
+            | xargs -0 -n1 python -m py_compile
+
+      - name: Bash script syntax check
+        run: |
+          for f in scripts/* ; do
+            [ -f "$f" ] || continue
+            head -1 "$f" | grep -q '^#!.*\(bash\|sh\)' || continue
+            bash -n "$f"
+          done
+
+      - name: state.json schema sanity (if checked in)
+        run: |
+          if [ -f state.json ]; then
+            python -c "
+          import json, sys
+          s = json.load(open('state.json'))
+          required = ['schema_version', 'messages', 'tasks', 'memory',
+                      'flows', 'approvals', 'votes', 'audit', 'channels']
+          missing = [k for k in required if k not in s]
+          if missing: print('missing keys:', missing); sys.exit(1)
+          print('state.json schema OK, version=' + str(s['schema_version']))
+          "
+          else
+            echo "no state.json checked in (expected) — skipping"
+          fi
+
+      - name: Broker import-smoke (no network)
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          import broker
+          assert hasattr(broker, 'Broker'), 'Broker class missing'
+          print('broker.py import OK; constants:',
+                'UI_PORT=' + str(broker.UI_PORT),
+                'INSTANCE_PORT=' + str(broker.INSTANCE_PORT),
+                'MAX_MESSAGES_IN_STATE=' + str(broker.MAX_MESSAGES_IN_STATE))
+          "
+
+      - name: pre-commit (if installed)
+        run: |
+          if [ -f .pre-commit-config.yaml ]; then
+            pip install pre-commit
+            pre-commit run --all-files --show-diff-on-failure || true
+          fi
