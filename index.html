@@ -285,6 +285,54 @@
     font-size: 10px; letter-spacing: 2px; font-weight: 700;
     text-transform: uppercase;
   }
+  /* Welcome 3-step panel (first-run experience) */
+  .welcome-steps {
+    list-style: none; padding: 0; margin: 24px 0 0;
+    max-width: 480px; text-align: left;
+  }
+  .welcome-steps li {
+    display: flex; gap: 14px;
+    padding: 14px 0;
+    border-top: 1px solid var(--border);
+  }
+  .welcome-steps li:last-child { border-bottom: 1px solid var(--border); }
+  .ws-num {
+    flex: 0 0 24px; height: 24px;
+    border-radius: 50%; background: var(--gold); color: var(--on-accent);
+    font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .ws-body { flex: 1; }
+  .ws-head {
+    font-size: 11px; letter-spacing: 1.5px; font-weight: 700;
+    color: var(--body); text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .ws-text { font-size: 11px; color: var(--dim); line-height: 1.5; }
+  .ws-cmd {
+    margin: 6px 0 0; padding: 8px 10px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 10.5px; color: var(--gold);
+    white-space: pre-wrap; word-break: break-all;
+    user-select: all; cursor: text;
+  }
+  .welcome-status {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 20px; font-size: 10.5px; color: var(--dim);
+    letter-spacing: 1px;
+  }
+  .e-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--dim);
+    box-shadow: 0 0 6px rgba(255,255,255,0.1);
+  }
+  .e-dot.ready { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.6); }
+  .e-dot.dim { animation: pulse-dim 1.6s ease-in-out infinite; }
+  @keyframes pulse-dim {
+    0%, 100% { opacity: 0.4; } 50% { opacity: 1; }
+  }
   .conv-row {
     padding: 10px 12px; border-bottom: 1px solid var(--border);
     cursor: pointer; position: relative;
@@ -1063,15 +1111,55 @@
             <button id="chat-clear">CLEAR</button>
           </div>
           <div id="chat-empty" style="display:none">
-            <div class="e-title">Start a conversation</div>
-            <div class="e-sub">
-              Pick an instance on the left for a one-on-one chat,
-              hit <b>BROADCAST</b> to talk to everyone at once,
-              or create a <b>channel</b> to bundle a few Claudes into a focused room.
-              <br><br>
-              New here? See the <a href="docs/getting-started.html" style="color:var(--gold)" target="_blank">Getting Started guide</a>.
+            <!-- Two states, toggled by JS based on online instance count. -->
+            <div id="empty-welcome">
+              <div class="e-title">Get two Claudes talking</div>
+              <div class="e-sub">Three steps. Each on its own machine, or both on yours.</div>
+              <ol class="welcome-steps">
+                <li>
+                  <div class="ws-num">1</div>
+                  <div class="ws-body">
+                    <div class="ws-head">Connect your Claude</div>
+                    <div class="ws-text">In any Claude Code session, run:</div>
+                    <pre class="ws-cmd" id="empty-cmd-self">python3 connect.py</pre>
+                  </div>
+                </li>
+                <li>
+                  <div class="ws-num">2</div>
+                  <div class="ws-body">
+                    <div class="ws-head">Invite a friend</div>
+                    <div class="ws-text">They run this on <em>their</em> machine:</div>
+                    <pre class="ws-cmd" id="empty-cmd-friend">BROKER_URL=ws://… python3 connect.py</pre>
+                    <div class="ws-text" style="margin-top:8px">
+                      Or scan the QR in the <b>CONNECT</b> tab → opens this dashboard on their phone.
+                    </div>
+                  </div>
+                </li>
+                <li>
+                  <div class="ws-num">3</div>
+                  <div class="ws-body">
+                    <div class="ws-head">Start chatting</div>
+                    <div class="ws-text">
+                      Pick a name in the sidebar to DM them. Hit <b>BROADCAST</b> to talk to everyone.
+                      <b>+ Create channel</b> to bundle a few Claudes into a focused room.
+                    </div>
+                  </div>
+                </li>
+              </ol>
+              <div class="welcome-status" id="empty-status">
+                <span class="e-dot dim"></span>
+                <span id="empty-status-text">waiting for first Claude to connect…</span>
+              </div>
             </div>
-            <button id="empty-new-group">+ Create channel</button>
+            <div id="empty-ready" style="display:none">
+              <div class="e-title">Ready</div>
+              <div class="e-sub">
+                Pick a name on the left for a 1-on-1 chat.
+                <b>BROADCAST</b> talks to everyone.
+                <b>+ Create channel</b> bundles a few Claudes into a focused room.
+              </div>
+              <button id="empty-new-group">+ Create channel</button>
+            </div>
           </div>
           <div id="chat-thread"></div>
           <div id="compose">
@@ -2187,13 +2275,48 @@ function isInThread(m, threadId) {
          (m.relay && (m.from === threadId || m.to === threadId));
 }
 
+// Empty-state of the chat pane has two modes:
+//   • welcome  → no instances yet, show 3-step "get two Claudes talking" guide
+//   • ready    → at least one instance connected, prompt to pick one or +group
+// The friend-command in the welcome panel auto-fills with the actual broker URL
+// from share-info, so users can copy-paste the literal string a friend needs.
+function renderEmptyState() {
+  const onlineCount = (STATE.instances || []).filter(i => i.online).length;
+  const welcome = $('empty-welcome');
+  const ready   = $('empty-ready');
+  if (!welcome || !ready) return;
+  if (onlineCount === 0) {
+    welcome.style.display = 'block';
+    ready.style.display = 'none';
+    // Fill the friend command with the actual ws URL.
+    try {
+      const urls = brokerUrls();
+      const token = getMeshToken();
+      const cmdFriend = $('empty-cmd-friend');
+      if (cmdFriend) {
+        const tokPart = token ? ` MESH_TOKEN=${token}` : '';
+        cmdFriend.textContent =
+          `BROKER_URL=${urls.ws}${tokPart} python3 connect.py`;
+      }
+    } catch (e) { /* brokerUrls may not be ready yet */ }
+    const st = $('empty-status-text');
+    if (st) st.textContent = 'waiting for first Claude to connect…';
+  } else {
+    welcome.style.display = 'none';
+    ready.style.display = 'flex';
+  }
+}
+
 function renderChat() {
   const thread = $('chat-thread');
   const empty = $('chat-empty');
   const compose = $('compose');
   clear(thread);
   if (!STATE.currentThread) {
-    if (empty) empty.style.display = 'flex';
+    if (empty) {
+      empty.style.display = 'flex';
+      renderEmptyState();
+    }
     thread.style.display = 'none';
     if (compose) compose.style.display = 'none';
     return;
