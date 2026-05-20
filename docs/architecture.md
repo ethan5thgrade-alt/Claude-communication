@@ -137,6 +137,38 @@ If `cc2` reconnects before calling `task_done`, the `tasks_init` payload it
 gets at registration includes the open assignment, so it never loses the
 hand-off.
 
+### Channel fan-out (server-side groups)
+
+A channel is a named server-side list of members. Sending to
+`to: "channel:<id>"` fans out one message per member, each tagged with
+`channel=<id>`. Bots that reply preserve the tag, so the UI filter is a
+single equality check (`m.channel === channelId`) and historical 1-on-1
+messages never leak into the channel thread.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User (UI)
+    participant B as Broker
+    participant CC as Channel ch_xxx
+    participant A as cc-alpha
+    participant V as cc-bravo
+
+    U->>B: POST /api/send {to: "channel:ch_xxx", text: "hey team"}
+    B->>CC: lookup members [cc-alpha, cc-bravo]
+    B->>A: msg {to: cc-alpha, channel: ch_xxx, text: "hey team"}
+    B->>V: msg {to: cc-bravo, channel: ch_xxx, text: "hey team"}
+    A->>B: reply {from: cc-alpha, to: you, channel: ch_xxx, text: "on it"}
+    V->>B: reply {from: cc-bravo, to: you, channel: ch_xxx, text: "same"}
+    B-->>U: push all msgs with channel=ch_xxx
+    Note over U: filter: m.channel === "ch_xxx" → shown in channel thread
+```
+
+Bot replies inherit the original channel via the bot's `orig_channel`
+extraction; agent-to-agent direct messages (no channel) are intentionally
+muted to prevent loops, so channels are the canonical path for multi-agent
+coordination.
+
 ## Concurrency model
 
 The broker runs one asyncio event loop and one `asyncio.Lock` guarding state
