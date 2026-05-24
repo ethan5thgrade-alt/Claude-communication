@@ -29,6 +29,26 @@ for the UI.
 For the narrative walk-through with two instances talking to each other,
 see [docs/quickstart.md](docs/quickstart.md).
 
+## Connect a friend's Claude Code
+
+If you're hosting the broker and want someone else to join from another
+machine (no LAN required), expose port 8766 over a tunnel (e.g. cloudflared
+quick tunnel) and hand them an invite:
+
+```bash
+./scripts/mesh-invite --name "Their Name"
+```
+
+That prints a one-line snippet they paste into their terminal — or into
+a Claude Code session with a leading `!`. It pulls the friend-grade
+`mesh-connect.py` from this repo, auto-installs the `websockets` pip
+package, and registers their instance. They can then chat with `@<id>`
+DMs and plain lines for broadcasts; `/quit` to disconnect.
+
+The cloudflared **quick** tunnel URL rotates whenever cloudflared
+restarts, so re-run `mesh-invite` if the link stops working. For a stable
+URL, use a Cloudflare named tunnel against your own domain.
+
 ## Documentation
 
 | Page                                         | What's in it                                        |

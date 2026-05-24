@@ -7,13 +7,23 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/python3.13</string>
+        <string>/usr/bin/python3</string>
         <string>-u</string>
-        <string>/Users/ethanstrauss/agent-mesh/broker.py</string>
+        <string>/Users/ethanstrauss/code/Claude-communication/broker.py</string>
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/ethanstrauss/agent-mesh</string>
+    <string>/Users/ethanstrauss/code/Claude-communication</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MESH_TOKEN</key>
+        <string>Mrxenn8n2-bFqIkxIOFW5w</string>
+        <key>PYTHONUSERBASE</key>
+        <string>/Users/ethanstrauss/Library/Python/3.9</string>
+        <key>HOME</key>
+        <string>/Users/ethanstrauss</string>
+    </dict>
 
     <key>RunAtLoad</key>
     <true/>

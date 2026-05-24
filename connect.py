@@ -23,7 +23,7 @@ import websockets
 # the hardcoded defaults; the constants here are only used when nothing is set.
 INSTANCE_ID = os.environ.get("INSTANCE_ID") or "cc1"
 NAME = os.environ.get("INSTANCE_NAME") or os.environ.get("NAME") or "Claude 1"
-PROJECT = os.environ.get("INSTANCE_PROJECT") or os.environ.get("PROJECT") or "OPTFINDER"
+PROJECT = os.environ.get("INSTANCE_PROJECT") or os.environ.get("PROJECT") or "default"
 # Optional account identity — surfaces in the dashboard so users running
 # multiple Anthropic accounts on one machine can tell instances apart.
 EMAIL = os.environ.get("INSTANCE_EMAIL") or os.environ.get("EMAIL") or ""
