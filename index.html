@@ -1962,6 +1962,22 @@ ngrok http 8766   # in a second terminal for the WS port</pre>
 <script>
 "use strict";
 
+// Auto-inject X-Mesh-Token header on every fetch so the dashboard works
+// when MESH_TOKEN is set on the broker.
+(function () {
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function (input, init) {
+    const tok = (new URL(window.location.href)).searchParams.get('token')
+              || localStorage.getItem('am.token') || '';
+    if (!tok) return _origFetch(input, init);
+    init = init || {};
+    const headers = new Headers(init.headers || {});
+    if (!headers.has('X-Mesh-Token')) headers.set('X-Mesh-Token', tok);
+    init.headers = headers;
+    return _origFetch(input, init);
+  };
+})();
+
 // ============================================================================
 // STATE
 // ============================================================================
@@ -2167,7 +2183,8 @@ function confirmModal(title, body, onOk) {
 // WEBSOCKET
 // ============================================================================
 function connect() {
-  const url = `ws://${location.host}/ui`;
+  const token = getMeshToken();
+  const url = `ws://${location.host}/ui${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   setConnState('connecting');
   let ws;
   try {
