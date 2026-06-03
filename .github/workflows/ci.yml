@@ -22,6 +22,13 @@ jobs:
         # Without these, the import-smoke step fails on `import aiohttp` (broker.py:23).
         run: pip install websockets aiohttp
 
+      - name: Install test dependencies
+        # pytest.ini declares pytest-asyncio config options and the suite
+        # imports pytest_asyncio directly; without it collection fails with
+        # ModuleNotFoundError. Kept in requirements-dev.txt so the gate and
+        # local `make test` install the same set.
+        run: pip install -r requirements-dev.txt
+
       - name: Python syntax check
         run: |
           python -m py_compile broker.py

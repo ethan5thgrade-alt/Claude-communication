@@ -49,7 +49,7 @@ any `connect.py` session that registers.
 ## What's next
 
 - Phase 2: Chat page (channels + DMs), Tasks kanban, Memory store
-- Phase 3: Invite emails (Resend), Analytics, Spend tracking, Automations
+- Phase 3: Invite emails (Resend), Analytics, Automations
 - Phase 4: Stripe billing, API keys, Public `/v1/*` API, Admin panel
 - Phase 5: Full landing + pricing + blog + changelog + OG
 - Phase 6: Production deployment (Vercel + Hetzner broker)

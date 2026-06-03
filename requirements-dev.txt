@@ -1,0 +1,12 @@
+# Test/dev dependencies for the agent-mesh broker.
+# Runtime deps (websockets, aiohttp) are documented in the README quickstart.
+#
+# pytest.ini sets `asyncio_mode = auto` and
+# `asyncio_default_fixture_loop_scope = function`, which are pytest-asyncio
+# config options. The suite (tests/test_broker.py, tests/test_clients.py)
+# imports pytest_asyncio directly and decorates fixtures with
+# @pytest_asyncio.fixture, so the plugin is required, not optional.
+pytest>=8.2,<9
+pytest-asyncio>=0.24
+websockets
+aiohttp
