@@ -1,11 +1,14 @@
 "use client"
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 
-export default function SignupPage() {
+function SignupInner() {
   const router = useRouter()
+  const params = useSearchParams()
+  // Carry an optional post-verification destination (e.g. an invite link).
+  const next = params.get("next") || "/onboarding"
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
@@ -18,7 +21,7 @@ export default function SignupPage() {
     const { error } = await supabase.auth.signUp({
       email, password,
       options: {
-        emailRedirectTo: `${location.origin}/api/auth/callback?next=/onboarding`,
+        emailRedirectTo: `${location.origin}/api/auth/callback?next=${encodeURIComponent(next)}`,
       },
     })
     setLoading(false)
@@ -59,8 +62,17 @@ export default function SignupPage() {
         </button>
       </form>
       <div className="mt-6 text-center text-xs text-text-muted">
-        Already have one? <Link href="/login" className="text-gold hover:underline">Log in</Link>
+        Already have one?{" "}
+        <Link href={`/login?next=${encodeURIComponent(next)}`} className="text-gold hover:underline">Log in</Link>
       </div>
     </div>
+  )
+}
+
+export default function SignupPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignupInner />
+    </Suspense>
   )
 }
