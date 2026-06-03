@@ -995,6 +995,67 @@ async def test_http_health_returns_ok(started_broker):
     assert isinstance(data["build_sha"], str)
 
 
+# The web SSE relay (web/app/api/workspaces/[slug]/broker/sse) opens this UI WS,
+# emits the init frame as an SSE `init` event, and forwards a fixed set of
+# broadcast_ui frame types. These two tests pin the broker-side contract that
+# relay depends on so a broker change can't silently break the stream.
+
+# Keep in sync with FORWARDED_TYPES in the SSE route.
+SSE_INIT_COLLECTIONS = (
+    "approvals", "votes", "flows", "channels", "audit", "messages",
+)
+
+
+@pytest.mark.asyncio
+async def test_ui_init_carries_sse_relayed_collections(started_broker):
+    """The UI WS init frame must include every collection the SSE relay turns
+    into its `init` snapshot event, matching the GET /api/<collection> reads."""
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            init = await ui_ws.receive_json(timeout=2)
+    assert init["type"] == "init"
+    for key in SSE_INIT_COLLECTIONS:
+        assert key in init, f"init snapshot missing '{key}' the SSE relay forwards"
+        assert isinstance(init[key], list)
+
+
+@pytest.mark.asyncio
+async def test_ui_ws_receives_approval_request_broadcast(started_broker):
+    """An instance-raised approval is pushed to a connected UI WS as an
+    `approval_request` frame — the forward path the SSE relay turns into an SSE
+    event. Asserts the frame arrives and carries the approval payload."""
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(UI_WS_URL) as ui_ws:
+            init = await ui_ws.receive_json(timeout=2)
+            assert init["type"] == "init"
+            async with websockets.connect(WS_URL) as ws:
+                await _register(ws, iid="cc1")
+                await ws.send(json.dumps({
+                    "type": "approval_request",
+                    "action": "deploy to production",
+                    "risk": "high",
+                    "detail": "ship build 42",
+                }))
+
+                async def wait_approval():
+                    async for raw in ui_ws:
+                        if raw.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        p = json.loads(raw.data)
+                        if p.get("type") == "approval_request":
+                            return p
+
+                got = await asyncio.wait_for(wait_approval(), timeout=2)
+    ap = got["approval"]
+    assert ap["from"] == "cc1"
+    assert ap["action"] == "deploy to production"
+    assert ap["risk"] == "high"
+    assert ap["status"] == "pending"
+    # The approval landed in broker state, so the SSE relay's REST snapshot
+    # (GET /api/approvals) and its pushed event agree.
+    assert any(a["id"] == ap["id"] for a in started_broker.state["approvals"])
+
+
 @pytest.mark.asyncio
 async def test_http_metrics_prom_format(started_broker):
     async with aiohttp.ClientSession() as session:
@@ -1431,6 +1492,129 @@ async def test_http_vote_cast_unknown_id_404(started_broker):
         async with session.post(REST_URL + "/api/vote/V999/cast",
                                 json={"option": "a"}) as r:
             assert r.status == 404
+
+
+@pytest.mark.asyncio
+async def test_http_approval_concurrent_respond_serializes(started_broker):
+    """Concurrent POST /api/approval/{id}/respond calls against the same valid
+    approval must serialize under the lock: a valid id never spuriously 404s,
+    every call returns 200, and the server settles on a single coherent
+    decision (no lost-update where status and decision disagree).
+
+    Regression guard for the TOCTOU window where the lookup ran outside the
+    lock — a concurrent decision could be applied between the read and the
+    mutation, leaving a torn record.
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/approval",
+                                json={"from": "cc1", "action": "deploy",
+                                      "risk": "high"}) as r:
+            assert r.status == 200
+            ap_id = (await r.json())["approval"]["id"]
+
+        # Fire a burst of concurrent decisions (alternating approve/reject)
+        # against the same valid id.
+        async def respond(approved: bool):
+            async with session.post(
+                    REST_URL + f"/api/approval/{ap_id}/respond",
+                    json={"approved": approved}) as resp:
+                return resp.status, await resp.json()
+
+        results = await asyncio.gather(
+            *[respond(i % 2 == 0) for i in range(12)])
+
+    # No spurious 404s on a valid id; all calls land.
+    statuses = [s for s, _ in results]
+    assert statuses == [200] * 12, statuses
+
+    # Server-authoritative final state is internally consistent: status matches
+    # the recorded decision boolean, and the approval is decided exactly once.
+    stored = next(a for a in started_broker.state["approvals"] if a["id"] == ap_id)
+    assert stored["status"] in ("approved", "rejected")
+    assert stored["decision"] is (stored["status"] == "approved")
+    assert stored.get("decided_at")
+
+
+@pytest.mark.asyncio
+async def test_http_vote_concurrent_cast_no_lost_updates(started_broker):
+    """Concurrent POST /api/vote/{id}/cast from distinct voters must each be
+    recorded — no lost updates from the read-modify-write of the ballots dict.
+
+    An online instance keeps the required voter set larger than {"you"}, so the
+    vote stays open across the burst instead of auto-resolving on ballot one.
+    """
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await asyncio.sleep(0.05)
+        async with aiohttp.ClientSession() as session:
+            async with session.post(REST_URL + "/api/vote",
+                                    json={"question": "target",
+                                          "options": ["a", "b"]}) as r:
+                assert r.status == 200
+                vid = (await r.json())["vote"]["id"]
+
+            async def cast(voter: str, option: str):
+                async with session.post(
+                        REST_URL + f"/api/vote/{vid}/cast",
+                        json={"voter": voter, "option": option}) as resp:
+                    return resp.status, await resp.json()
+
+            voters = [f"v{i}" for i in range(15)]
+            results = await asyncio.gather(
+                *[cast(v, "a" if i % 2 == 0 else "b")
+                  for i, v in enumerate(voters)])
+
+        assert all(s == 200 for s, _ in results)
+
+    # Every distinct voter's ballot survived the concurrent writes.
+    stored = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+    for i, v in enumerate(voters):
+        assert stored["ballots"][v] == ("a" if i % 2 == 0 else "b"), v
+    assert len(stored["ballots"]) == len(voters)
+
+
+@pytest.mark.asyncio
+async def test_http_vote_cast_close_race_rejects_late_ballots(started_broker):
+    """Deterministic TOCTOU guard: the status check MUST run inside self.lock.
+
+    We hold the broker lock to force an in-flight cast to queue on lock
+    acquisition, flip the vote to resolved while it waits, then release. A cast
+    whose status check is inside the lock observes the resolved state and 400s,
+    writing nothing. The pre-fix code (status checked BEFORE the lock) would
+    have passed its open-check, then written a ballot into the now-resolved
+    vote and returned 200 -- so reverting the fix makes this test fail.
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "q",
+                                      "options": ["a", "b"]}) as r:
+            assert r.status == 200
+            vid = (await r.json())["vote"]["id"]
+
+        async def cast():
+            async with session.post(
+                    REST_URL + f"/api/vote/{vid}/cast",
+                    json={"voter": "late", "option": "b"}) as resp:
+                return resp.status, await resp.json()
+
+        # Hold the lock so the cast blocks on `async with self.lock` before it
+        # can validate status; simulate a concurrent close completing meanwhile.
+        await started_broker.lock.acquire()
+        try:
+            task = asyncio.create_task(cast())
+            await asyncio.sleep(0.2)  # let the request reach the lock acquire
+            v = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+            v["status"] = "resolved"
+            v["winner"] = "a"
+        finally:
+            started_broker.lock.release()
+        status, _ = await task
+
+    # The late cast must be rejected and must not have leaked into the resolved
+    # vote.
+    assert status == 400
+    stored = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+    assert "late" not in stored.get("ballots", {})
 
 
 @pytest.mark.asyncio
@@ -2165,3 +2349,502 @@ async def test_ts_client_vote_and_wait(started_broker):
     res2 = _parse_harness_line(out2)
     assert res2["ok"] is True, f"harness failed: {res2} stderr={err2.decode()[-500:]}"
     assert res2["result"] is None, "voteAndWait should return null on timeout"
+
+
+# --------------------------------------------------------------------------
+# Auth-callback open-redirect guard (web/lib/safe-next.ts).
+#
+# The /api/auth/callback route redirects to an attacker-controlled `next` query
+# param after the OAuth/email code exchange. safeNextPath must accept only
+# same-origin relative paths and fall back to /onboarding for anything that
+# could navigate off-origin (absolute, protocol-relative, or non-path input).
+#
+# We drive the REAL safeNextPath via a Node harness (tests/safe_next_harness.mjs)
+# that imports the same module the route imports, so the guarantee is checked
+# against shipping code rather than a re-implementation.
+# --------------------------------------------------------------------------
+
+_SAFE_NEXT_HARNESS = Path(__file__).resolve().parent / "safe_next_harness.mjs"
+_DEFAULT_NEXT = "/onboarding"
+
+
+async def _run_safe_next(raw):
+    """Spawn the guard harness for `raw` and return the resolved redirect path.
+
+    `raw is None` exercises the param-absent path; any string (including "") is
+    passed through to safeNextPath as a present value.
+    """
+    env = dict(os.environ)
+    if raw is None:
+        env.pop("NEXT_PRESENT", None)
+        env.pop("NEXT_INPUT", None)
+    else:
+        env["NEXT_PRESENT"] = "1"
+        env["NEXT_INPUT"] = raw
+    proc = await asyncio.create_subprocess_exec(
+        _NODE_BIN, "--experimental-strip-types", str(_SAFE_NEXT_HARNESS),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    out, err = await asyncio.wait_for(proc.communicate(), timeout=10)
+    res = _parse_harness_line(out)
+    assert res["ok"] is True, f"harness failed: {res} stderr={err.decode()[-500:]}"
+    return res["result"]
+
+
+@_ts_skip
+@pytest.mark.asyncio
+async def test_safe_next_rejects_open_redirects():
+    """safeNextPath rejects every off-origin variant and accepts only same-origin
+    relative paths. Covers the acceptance matrix for the callback redirect."""
+    # (1) absolute URL -> rejected, falls back to default.
+    assert await _run_safe_next("https://attacker.com") == _DEFAULT_NEXT
+    # (2) protocol-relative URL -> rejected.
+    assert await _run_safe_next("//attacker.com") == _DEFAULT_NEXT
+    # (3) same-origin relative path -> accepted verbatim.
+    assert await _run_safe_next("/onboarding") == "/onboarding"
+    # (4) empty value -> default. (5) param absent -> default.
+    assert await _run_safe_next("") == _DEFAULT_NEXT
+    assert await _run_safe_next(None) == _DEFAULT_NEXT
+    # (5b) no leading slash -> rejected (cannot be a same-origin path).
+    assert await _run_safe_next("onboarding") == _DEFAULT_NEXT
+
+
+@_ts_skip
+@pytest.mark.asyncio
+async def test_safe_next_blocks_smuggling_variants():
+    """Less obvious off-origin tricks that some URL parsers normalise: backslash
+    protocol-relative forms and other-scheme absolute URLs are all rejected."""
+    # Backslash variant browsers may normalise to "//".
+    assert await _run_safe_next("/\\attacker.com") == _DEFAULT_NEXT
+    assert await _run_safe_next("\\/attacker.com") == _DEFAULT_NEXT
+    # Other schemes.
+    assert await _run_safe_next("http://attacker.com") == _DEFAULT_NEXT
+    assert await _run_safe_next("javascript:alert(1)") == _DEFAULT_NEXT
+    # Control-char / whitespace smuggling: the WHATWG URL parser strips \t\r\n,
+    # so "/<CR><LF>//evil.com" must be rejected by the path allowlist, not pass a
+    # naive starts-with-"/" check.
+    assert await _run_safe_next("/\r\n//attacker.com") == _DEFAULT_NEXT
+    assert await _run_safe_next("/\t//attacker.com") == _DEFAULT_NEXT
+    # A legitimate deep link with query/hash is preserved.
+    assert await _run_safe_next("/settings?tab=billing") == "/settings?tab=billing"
+
+
+@pytest.mark.asyncio
+async def test_safe_next_preserves_invite_token():
+    """Invite tokens are UPPERCASE alphanumeric, so /invite/<TOKEN> must round-
+    trip; otherwise an invite signup never returns to the acceptance page."""
+    assert await _run_safe_next("/invite/A3FK9ZXQWERTYUIOPLKJHGFD") == \
+        "/invite/A3FK9ZXQWERTYUIOPLKJHGFD"
+    assert await _run_safe_next("/invite/abc123") == "/invite/abc123"
+
+
+# ============================================================================
+# connect.py CLI identity (--workspace / --name)
+# ============================================================================
+#
+# connect.py auto-starts a background WS client thread at import time. conftest.py
+# has already pointed connect.py's BROKER_URL at a free port, so importing it here
+# is safe and the loop just retries harmlessly against that dead port.
+
+
+def _import_connect():
+    import importlib
+
+    return importlib.import_module("connect")
+
+
+def test_connect_slugify_matches_web_form():
+    """connect.slugify mirrors web/lib/utils.ts: lowercase, hyphenated, trimmed."""
+    cm = _import_connect()
+    assert cm.slugify("My Team!") == "my-team"
+    assert cm.slugify("  Spaced  Out  ") == "spaced-out"
+    assert cm.slugify("a/b\\c") == "a-b-c"
+    assert cm.slugify("'quoted'") == "quoted"
+    assert cm.slugify("---") == ""
+    assert len(cm.slugify("x" * 80)) == 40
+
+
+def test_connect_validate_workspace_slug_accepts_valid():
+    cm = _import_connect()
+    assert cm.validate_workspace_slug("my-ws") == "my-ws"
+    assert cm.validate_workspace_slug("team1") == "team1"
+
+
+def test_connect_validate_workspace_slug_rejects_malformed():
+    cm = _import_connect()
+    for bad in ["My WS", "bad slug!", "-leading", "trailing-", "a--b", "", "x" * 41, "UPPER"]:
+        with pytest.raises(ValueError):
+            cm.validate_workspace_slug(bad)
+
+
+def test_connect_resolve_instance_id_workspace_only():
+    """No name -> the instance id is just the validated workspace slug."""
+    cm = _import_connect()
+    assert cm.resolve_instance_id("my-ws") == "my-ws"
+
+
+def test_connect_resolve_instance_id_with_name():
+    """A name -> '<workspace>-<name-slug>' so named instances stay distinct."""
+    cm = _import_connect()
+    assert cm.resolve_instance_id("my-ws", "Claude 1") == "my-ws-claude-1"
+    assert cm.resolve_instance_id("my-ws", "Claude 2") == "my-ws-claude-2"
+
+
+def test_connect_resolve_instance_id_validates_workspace():
+    cm = _import_connect()
+    with pytest.raises(ValueError):
+        cm.resolve_instance_id("Bad Slug!", "Claude 1")
+
+
+def test_connect_apply_cli_identity_exports_env(monkeypatch):
+    """--workspace/--name export INSTANCE_ID/INSTANCE_PROJECT/INSTANCE_NAME so the
+    register payload carries the workspace-derived id, not the hardcoded default."""
+    cm = _import_connect()
+    monkeypatch.delenv("INSTANCE_ID", raising=False)
+    monkeypatch.delenv("INSTANCE_PROJECT", raising=False)
+    monkeypatch.delenv("INSTANCE_NAME", raising=False)
+    cm._apply_cli_identity(["--workspace", "my-ws", "--name", "Claude 1"])
+    assert os.environ["INSTANCE_ID"] == "my-ws-claude-1"
+    assert os.environ["INSTANCE_PROJECT"] == "my-ws"
+    assert os.environ["INSTANCE_NAME"] == "Claude 1"
+
+
+def test_connect_apply_cli_identity_workspace_only(monkeypatch):
+    cm = _import_connect()
+    monkeypatch.delenv("INSTANCE_ID", raising=False)
+    monkeypatch.delenv("INSTANCE_PROJECT", raising=False)
+    cm._apply_cli_identity(["--workspace", "team-alpha"])
+    assert os.environ["INSTANCE_ID"] == "team-alpha"
+    assert os.environ["INSTANCE_PROJECT"] == "team-alpha"
+
+
+def test_connect_apply_cli_identity_rejects_bad_workspace():
+    cm = _import_connect()
+    with pytest.raises(ValueError):
+        cm._apply_cli_identity(["--workspace", "Bad Slug!"])
+
+
+def test_connect_workspace_guidance_warns_without_workspace():
+    """Run without --workspace: project stays 'default', so the onboarding page
+    can never match it. workspace_guidance must surface a warning telling the
+    user to pass --workspace."""
+    cm = _import_connect()
+    msg = cm.workspace_guidance("default", "")
+    assert msg is not None
+    assert "--workspace" in msg
+    assert "project='default'" in msg
+
+
+def test_connect_workspace_guidance_silent_when_workspace_set():
+    """A real workspace slug (set by --workspace via INSTANCE_WORKSPACE) means
+    detection works, so there is nothing to warn about."""
+    cm = _import_connect()
+    assert cm.workspace_guidance("acme-team", "acme-team") is None
+
+
+def test_connect_workspace_guidance_silent_when_project_overridden():
+    """A non-default project (e.g. via INSTANCE_PROJECT) is enough for the
+    onboarding predicate project==slug to match, so stay quiet even without an
+    explicit workspace slug."""
+    cm = _import_connect()
+    assert cm.workspace_guidance("acme-team", "") is None
+
+
+@pytest.mark.asyncio
+async def test_connect_cli_no_workspace_not_detected(started_broker):
+    """End-to-end of the bug: launching connect.py WITHOUT --workspace registers
+    with project='default', so the onboarding page's `online && project===slug`
+    predicate never flips for a real workspace like 'acme-team'. This proves the
+    failure mode the warning addresses (and that --workspace is the fix)."""
+    repo_root = str(ROOT)
+    env = dict(os.environ)
+    env["BROKER_URL"] = WS_URL
+    for k in ("INSTANCE_ID", "INSTANCE_NAME", "NAME", "INSTANCE_PROJECT",
+              "PROJECT", "INSTANCE_WORKSPACE", "WORKSPACE_SLUG"):
+        env.pop(k, None)
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "connect.py",
+        cwd=repo_root,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=env,
+    )
+    try:
+        async def _online() -> bool:
+            info = started_broker.instances.get("cc1")
+            return bool(info and info.get("online"))
+
+        deadline = asyncio.get_event_loop().time() + 8.0
+        while asyncio.get_event_loop().time() < deadline:
+            if await _online():
+                break
+            await asyncio.sleep(0.1)
+
+        info = started_broker.instances.get("cc1")
+        assert info is not None and info.get("online") is True
+        # The default project is what dooms detection on the onboarding page.
+        assert info.get("project") == "default"
+        snap = started_broker.instances_snapshot()
+
+        def detected_for(slug: str) -> bool:
+            return any(i["online"] and i["project"] == slug for i in snap)
+
+        assert detected_for("acme-team") is False
+    finally:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_connect_cli_registers_workspace_derived_id(started_broker, tmp_path):
+    """End-to-end: `python3 connect.py --workspace my-ws --name 'Claude 1'`
+    registers an instance whose id reflects the workspace context, proving the
+    CLI flags reach the register payload instead of the default 'cc1'."""
+    repo_root = str(ROOT)
+    env = dict(os.environ)
+    env["BROKER_URL"] = WS_URL
+    # Strip any inherited identity so only the CLI flags determine the id.
+    for k in ("INSTANCE_ID", "INSTANCE_NAME", "NAME", "INSTANCE_PROJECT", "PROJECT"):
+        env.pop(k, None)
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "connect.py", "--workspace", "my-ws", "--name", "Claude 1",
+        cwd=repo_root,
+        stdin=asyncio.subprocess.DEVNULL,  # non-TTY: connect.py keeps the loop alive
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+        env=env,
+    )
+    try:
+        # Poll the broker until the workspace-derived instance shows up online.
+        async def _registered() -> bool:
+            info = started_broker.instances.get("my-ws-claude-1")
+            return bool(info and info.get("online"))
+
+        deadline = asyncio.get_event_loop().time() + 8.0
+        while asyncio.get_event_loop().time() < deadline:
+            if await _registered():
+                break
+            await asyncio.sleep(0.1)
+
+        info = started_broker.instances.get("my-ws-claude-1")
+        assert info is not None, (
+            f"expected id 'my-ws-claude-1', got {list(started_broker.instances)}"
+        )
+        assert info.get("online") is True
+        assert info.get("project") == "my-ws"
+        assert info.get("name") == "Claude 1"
+        # The hardcoded default must NOT have been used.
+        assert "cc1" not in started_broker.instances
+    finally:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_instances_rest_project_scopes_onboarding_detection(started_broker):
+    """The onboarding connect page polls GET /api/instances through the
+    workspace proxy and flips its "connected" flag only for instances whose
+    `project` equals the workspace slug (set by `connect.py --workspace`).
+
+    Register one instance for workspace-a and one for workspace-b against the
+    same broker, then assert the REST snapshot carries each instance's project
+    so the page's `online && project === slug` predicate isolates them: A's
+    instance must not satisfy B's filter and vice versa. This is the broker-side
+    guarantee that two users onboarding in different workspaces on a shared
+    broker do not trigger each other's detection.
+    """
+    async with websockets.connect(WS_URL) as ws_a, websockets.connect(WS_URL) as ws_b:
+        await _register(ws_a, iid="workspace-a-claude-1", name="Claude 1",
+                        project="workspace-a")
+        await _register(ws_b, iid="workspace-b-claude-1", name="Claude 1",
+                        project="workspace-b")
+        await asyncio.sleep(0.05)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(REST_URL + "/api/instances") as r:
+                assert r.status == 200
+                instances = await r.json()
+
+        # Predicate mirrors the onboarding page: online AND project === slug.
+        def detected_for(slug: str) -> bool:
+            return any(i["online"] and i["project"] == slug for i in instances)
+
+        assert detected_for("workspace-a") is True
+        assert detected_for("workspace-b") is True
+        # Cross-workspace isolation: neither slug picks up the other's instance,
+        # and an unrelated workspace with no instance never flips detection.
+        a_ids = {i["id"] for i in instances if i["online"] and i["project"] == "workspace-a"}
+        b_ids = {i["id"] for i in instances if i["online"] and i["project"] == "workspace-b"}
+        assert a_ids == {"workspace-a-claude-1"}
+        assert b_ids == {"workspace-b-claude-1"}
+        assert detected_for("workspace-c") is False
+
+
+# --------------------------------------------------------------------------
+# Workspace allowlist on register (correctness/high)
+# --------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def workspaces_broker(state_file, tmp_path):
+    """Broker with a workspace allowlist file mapping two slugs to ids."""
+    ws_file = tmp_path / "workspaces.json"
+    ws_file.write_text(json.dumps({
+        "acme": {"id": "ws_acme", "name": "Acme"},
+        "beta": {"id": "ws_beta", "name": "Beta"},
+    }))
+    plugins_dir = tmp_path / "plugins_cache"
+    plugins_dir.mkdir()
+    b = broker_mod.Broker(ui_port=UI_PORT, instance_port=INST_PORT,
+                          state_path=state_file, plugins_dir=plugins_dir,
+                          workspaces=str(ws_file))
+    await b.start()
+    await asyncio.sleep(0.05)
+    try:
+        yield b
+    finally:
+        await b.stop()
+        await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_workspace_agnostic_register_has_empty_workspace(started_broker):
+    """With no allowlist configured, register works and the snapshot carries
+    empty workspace fields (single-tenant dev is unchanged)."""
+    assert started_broker.workspaces is None
+    async with websockets.connect(WS_URL) as ws:
+        await _register(ws, iid="cc1")
+        await asyncio.sleep(0.05)
+        snap = started_broker.instances_snapshot()
+        row = next(i for i in snap if i["id"] == "cc1")
+        assert row["workspace_slug"] == ""
+        assert row["workspace_id"] == ""
+
+
+@pytest.mark.asyncio
+async def test_workspace_register_accepts_allowed_slug(workspaces_broker):
+    """A register frame naming an allowlisted slug succeeds; the snapshot
+    resolves the slug to its configured workspace_id."""
+    async with websockets.connect(WS_URL) as ws:
+        await ws.send(json.dumps({
+            "type": "register", "id": "cc1", "name": "C1", "project": "P",
+            "workspace_slug": "acme",
+        }))
+        init = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+        assert init["type"] == "memory_init"
+        tinit = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+        assert tinit["type"] == "tasks_init"
+        await asyncio.sleep(0.05)
+        assert "cc1" in workspaces_broker.instances
+        snap = workspaces_broker.instances_snapshot()
+        row = next(i for i in snap if i["id"] == "cc1")
+        assert row["workspace_slug"] == "acme"
+        assert row["workspace_id"] == "ws_acme"
+        # meta is persisted with the workspace context too
+        meta = workspaces_broker.state["instances_meta"]["cc1"]
+        assert meta["workspace_id"] == "ws_acme"
+
+
+@pytest.mark.asyncio
+async def test_workspace_register_rejects_unknown_slug(workspaces_broker):
+    """An unknown (or missing) slug => register_failed and the connection
+    closes without tracking the instance."""
+    async with websockets.connect(WS_URL) as ws:
+        await ws.send(json.dumps({
+            "type": "register", "id": "cc1", "name": "C1", "project": "P",
+            "workspace_slug": "ghost",
+        }))
+        raw = await asyncio.wait_for(ws.recv(), timeout=2)
+        payload = json.loads(raw)
+        assert payload["type"] == "register_failed"
+        assert payload["workspace_slug"] == "ghost"
+        closed = False
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=1)
+        except websockets.ConnectionClosed:
+            closed = True
+        except asyncio.TimeoutError:
+            pass
+        assert closed or ws.close_code is not None
+        assert "cc1" not in workspaces_broker.instances
+
+
+@pytest.mark.asyncio
+async def test_workspace_register_rejects_missing_slug(workspaces_broker):
+    """When an allowlist is configured, a register frame with no workspace_slug
+    at all is rejected — the broker is gated, not permissive."""
+    async with websockets.connect(WS_URL) as ws:
+        await ws.send(json.dumps({
+            "type": "register", "id": "cc1", "name": "C1", "project": "P",
+        }))
+        payload = json.loads(await asyncio.wait_for(ws.recv(), timeout=2))
+        assert payload["type"] == "register_failed"
+        await asyncio.sleep(0.05)
+        assert "cc1" not in workspaces_broker.instances
+
+
+@pytest.mark.asyncio
+async def test_instances_rest_workspace_filter(workspaces_broker):
+    """GET /api/instances?workspace=slug returns only instances registered
+    under that slug. Accepts the resolved workspace_id too."""
+    async with websockets.connect(WS_URL) as ws_a, websockets.connect(WS_URL) as ws_b:
+        for ws, iid, slug in ((ws_a, "a1", "acme"), (ws_b, "b1", "beta")):
+            await ws.send(json.dumps({
+                "type": "register", "id": iid, "name": iid, "project": "P",
+                "workspace_slug": slug,
+            }))
+            # drain memory_init + tasks_init
+            assert json.loads(await asyncio.wait_for(ws.recv(), timeout=2))["type"] == "memory_init"
+            assert json.loads(await asyncio.wait_for(ws.recv(), timeout=2))["type"] == "tasks_init"
+        await asyncio.sleep(0.05)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(REST_URL + "/api/instances?workspace=acme") as r:
+                assert r.status == 200
+                acme = await r.json()
+            async with session.get(REST_URL + "/api/instances?workspace=ws_beta") as r:
+                assert r.status == 200
+                beta_by_id = await r.json()
+            async with session.get(REST_URL + "/api/instances") as r:
+                everyone = await r.json()
+
+        assert {i["id"] for i in acme} == {"a1"}
+        assert acme[0]["workspace_id"] == "ws_acme"
+        # The connect/onboarding page keys detection off workspace_slug + online
+        # (i.online && i.workspace_slug === ws), so both must be surfaced per row.
+        assert acme[0]["workspace_slug"] == "acme"
+        assert acme[0]["online"] is True
+        # filtering by the resolved id works as well as by slug
+        assert {i["id"] for i in beta_by_id} == {"b1"}
+        # unfiltered snapshot still shows both
+        assert {"a1", "b1"} <= {i["id"] for i in everyone}
+
+
+def test_load_workspaces_shapes(tmp_path):
+    """_load_workspaces accepts a list, an object, a path, or None."""
+    assert broker_mod._load_workspaces(None) is None
+    # list shape: slug doubles as id/name
+    assert broker_mod._load_workspaces(["x", "y"]) == {
+        "x": {"id": "x", "name": "x"},
+        "y": {"id": "y", "name": "y"},
+    }
+    # object shape with explicit id
+    assert broker_mod._load_workspaces({"acme": {"id": "ws_1"}})["acme"]["id"] == "ws_1"
+    # missing file => deny-all (empty dict, not None)
+    assert broker_mod._load_workspaces(str(tmp_path / "nope.json")) == {}
+    # path to a real file
+    p = tmp_path / "ws.json"
+    p.write_text(json.dumps(["only"]))
+    assert broker_mod._load_workspaces(str(p)) == {"only": {"id": "only", "name": "only"}}
