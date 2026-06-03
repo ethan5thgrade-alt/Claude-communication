@@ -2399,6 +2399,55 @@ class Broker:
         await self.state_update({"tasks": self.state["tasks"]})
         return self._json_response({"ok": True, "task": task})
 
+    # Editable task fields exposed over REST. status is the common case
+    # (column moves); assignee/priority/title/deps round it out. created_by,
+    # done_by, result and id are server-owned and never client-settable here.
+    _TASK_EDITABLE = ("status", "assignee", "priority", "title", "deps")
+
+    async def http_put_task(self, request):
+        """PUT /api/task/{tid} — update editable fields on a task.
+
+        Mirrors the update_task WS action: applies a candidate patch, rejects
+        the change if it would introduce a dependency cycle, then persists and
+        broadcasts. Status moves between columns flow through here."""
+        tid = request.match_info.get("tid", "")
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        patch = {k: v for k, v in body.items() if k in self._TASK_EDITABLE}
+        if not patch:
+            return self._json_response({"error": "no editable fields"}, status=400)
+        async with self.lock:
+            t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
+            if not t:
+                return self._json_response({"error": "task not found"}, status=404)
+            candidate = dict(t)
+            candidate.update(patch)
+            others = [x for x in self.state["tasks"] if x["id"] != tid]
+            if self.has_cycle(others + [candidate]):
+                return self._json_response(
+                    {"error": "cyclic task dependencies"}, status=400)
+            t.update(patch)
+            self.audit("you", "task_update", f"{tid} (REST)")
+            self.schedule_write()
+        await self.state_update({"tasks": self.state["tasks"]})
+        return self._json_response({"ok": True, "task": t})
+
+    async def http_delete_task(self, request):
+        """DELETE /api/task/{tid} — remove a task from the board."""
+        tid = request.match_info.get("tid", "")
+        async with self.lock:
+            before = len(self.state["tasks"])
+            self.state["tasks"] = [x for x in self.state["tasks"] if x["id"] != tid]
+            removed = len(self.state["tasks"]) < before
+            if removed:
+                self.audit("you", "task_delete", f"{tid} (REST)")
+                self.schedule_write()
+        if removed:
+            await self.state_update({"tasks": self.state["tasks"]})
+        return self._json_response({"ok": True, "removed": 1 if removed else 0})
+
     async def http_post_memory(self, request):
         try:
             body = await request.json()
@@ -2620,6 +2669,28 @@ class Broker:
         await self.broadcast_ui({"type": "flow_fired", "id": fid})
         return self._json_response({"ok": True, "flow": f})
 
+    async def http_post_flow_toggle(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        fid = request.match_info.get("fid")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        f = next((x for x in self.state["flows"] if x["id"] == fid), None)
+        if not f:
+            return self._json_response({"error": "flow not found"}, status=404)
+        async with self.lock:
+            if "enabled" in body:
+                f["enabled"] = bool(body.get("enabled"))
+            else:
+                f["enabled"] = not f.get("enabled", True)
+            self.audit("you", "flow_toggle", f"{fid}={f['enabled']} (REST)")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "flows", "flows": self.state["flows"]})
+        return self._json_response({"ok": True, "flow": f})
+
     # ------------------- team endpoints -------------------
     async def http_teams_create(self, request):
         """POST /api/teams — create a team, returns {team_id, invite_code, invite_url}."""
@@ -2764,6 +2835,8 @@ class Broker:
         app.router.add_get("/api/messages", self.http_messages)
         app.router.add_get("/api/bots", self.http_bots)
         app.router.add_post("/api/task", self.http_post_task)
+        app.router.add_put("/api/task/{tid}", self.http_put_task)
+        app.router.add_delete("/api/task/{tid}", self.http_delete_task)
         app.router.add_post("/api/memory", self.http_post_memory)
         # approvals / votes / flows: REST counterparts of the WS actions
         app.router.add_post("/api/approval", self.http_post_approval)
@@ -2773,6 +2846,7 @@ class Broker:
         app.router.add_post("/api/flow", self.http_post_flow)
         app.router.add_delete("/api/flow/{fid}", self.http_delete_flow)
         app.router.add_post("/api/flow/{fid}/fire", self.http_post_flow_fire)
+        app.router.add_post("/api/flow/{fid}/toggle", self.http_post_flow_toggle)
         app.router.add_get("/api/plugins", self.http_plugins)
         app.router.add_get("/api/plugins/{plugin_id}", self.http_plugin_detail)
         # New endpoints: rooms and share-info

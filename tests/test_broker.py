@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import socket
 import sys
 import tempfile
@@ -1027,6 +1028,96 @@ async def test_http_post_task_creates(started_broker):
 
 
 @pytest.mark.asyncio
+async def test_http_vote_create_cast_and_resolve(started_broker):
+    """REST vote lifecycle backing the dashboard Votes page: POST /api/vote
+    creates an open vote; POST /api/vote/{id}/cast records ballots and bumps the
+    tally; crossing the threshold resolves the vote with the winning option."""
+    async with aiohttp.ClientSession() as session:
+        # Create a vote with two options and a threshold of 2.
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "ship it?",
+                                      "options": ["yes", "no"],
+                                      "threshold": 2}) as r:
+            assert r.status == 200
+            created = await r.json()
+        assert created["ok"] is True
+        vid = created["vote"]["id"]
+        assert created["vote"]["status"] == "open"
+        assert created["vote"]["options"] == ["yes", "no"]
+
+        # The open vote shows up on GET /api/votes (what the page polls).
+        async with session.get(REST_URL + "/api/votes") as r:
+            assert r.status == 200
+            listing = await r.json()
+        assert any(v["id"] == vid and v["status"] == "open"
+                   for v in listing["votes"])
+
+        # First ballot from a named voter. One ballot is below threshold, so the
+        # vote stays open and the tally reflects exactly one vote for "yes".
+        async with session.post(REST_URL + f"/api/vote/{vid}/cast",
+                                json={"voter": "alice", "option": "yes"}) as r:
+            assert r.status == 200
+            after_one = await r.json()
+        assert after_one["vote"]["ballots"]["alice"] == "yes"
+        assert after_one["vote"]["status"] == "open"
+
+        # Second ballot for the same option crosses threshold=2 and resolves.
+        async with session.post(REST_URL + f"/api/vote/{vid}/cast",
+                                json={"voter": "bob", "option": "yes"}) as r:
+            assert r.status == 200
+            after_two = await r.json()
+        assert after_two["vote"]["ballots"]["bob"] == "yes"
+
+    # Server state is authoritative: vote resolved, winner recorded, both
+    # ballots persisted for the page to render voter names and choices.
+    v = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+    assert v["status"] == "resolved"
+    assert v["winner"] == "yes"
+    assert v["ballots"] == {"alice": "yes", "bob": "yes"}
+
+
+@pytest.mark.asyncio
+async def test_http_vote_create_requires_two_options(started_broker):
+    """The create form requires >=2 options; the broker rejects a single-option
+    vote so a malformed POST never lands in state."""
+    before = len(started_broker.state["votes"])
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "only one?",
+                                      "options": ["solo"]}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "options" in err.get("error", "").lower()
+    assert len(started_broker.state["votes"]) == before
+
+
+@pytest.mark.asyncio
+async def test_http_vote_cast_closed_rejected(started_broker):
+    """Once resolved, further ballots are rejected — the page disables the
+    buttons but the broker is the real guard."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "a or b?",
+                                      "options": ["a", "b"],
+                                      "threshold": 1}) as r:
+            assert r.status == 200
+            vid = (await r.json())["vote"]["id"]
+        # threshold=1 resolves on the first ballot
+        async with session.post(REST_URL + f"/api/vote/{vid}/cast",
+                                json={"voter": "alice", "option": "a"}) as r:
+            assert r.status == 200
+        # casting again must be refused
+        async with session.post(REST_URL + f"/api/vote/{vid}/cast",
+                                json={"voter": "bob", "option": "b"}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "closed" in err.get("error", "").lower()
+    v = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+    assert v["winner"] == "a"
+    assert "bob" not in v["ballots"]
+
+
+@pytest.mark.asyncio
 async def test_http_post_task_cycle_rejected(started_broker):
     async with aiohttp.ClientSession() as session:
         # T001
@@ -1053,6 +1144,138 @@ async def test_http_post_task_cycle_rejected(started_broker):
 
 
 @pytest.mark.asyncio
+async def test_http_put_task_updates_status(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "movable"}) as r:
+            assert r.status == 200
+            tid = (await r.json())["task"]["id"]
+        async with session.put(REST_URL + "/api/task/" + tid,
+                               json={"status": "In Progress"}) as r:
+            assert r.status == 200
+            data = await r.json()
+    assert data["ok"] is True
+    assert data["task"]["status"] == "In Progress"
+    t = next(x for x in started_broker.state["tasks"] if x["id"] == tid)
+    assert t["status"] == "In Progress"
+
+
+@pytest.mark.asyncio
+async def test_http_put_task_ignores_server_owned_fields(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "guarded"}) as r:
+            tid = (await r.json())["task"]["id"]
+        async with session.put(REST_URL + "/api/task/" + tid,
+                               json={"priority": "high", "created_by": "spoof",
+                                     "result": "injected"}) as r:
+            assert r.status == 200
+            data = await r.json()
+    # editable field applied, server-owned fields untouched
+    assert data["task"]["priority"] == "high"
+    assert data["task"]["created_by"] == "you"
+    assert "result" not in data["task"] or data["task"].get("result") != "injected"
+
+
+@pytest.mark.asyncio
+async def test_http_put_task_unknown_id_404(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.put(REST_URL + "/api/task/T999",
+                               json={"status": "Done"}) as r:
+            assert r.status == 404
+
+
+@pytest.mark.asyncio
+async def test_http_put_task_cycle_rejected(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "a", "deps": []}) as r:
+            t1 = (await r.json())["task"]["id"]
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "b", "deps": [t1]}) as r:
+            t2 = (await r.json())["task"]["id"]
+        # make t1 depend on t2 -> cycle, must be rejected and not applied
+        async with session.put(REST_URL + "/api/task/" + t1,
+                               json={"deps": [t2]}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "cyclic" in err.get("error", "").lower()
+    t = next(x for x in started_broker.state["tasks"] if x["id"] == t1)
+    assert t["deps"] == []
+
+
+@pytest.mark.asyncio
+async def test_http_put_task_edits_title_priority_assignee(started_broker):
+    """Backs the TaskDetailModal edit flow: the modal PUTs the editable fields
+    (title, priority, assignee) and re-reads the task on refetch. A single PUT
+    carrying all three must apply each one server-side, and a `result` value
+    sent alongside them must be ignored because result is server-owned."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "before", "priority": "low",
+                                      "assignee": ""}) as r:
+            assert r.status == 200
+            tid = (await r.json())["task"]["id"]
+        # One PUT with every modal-editable field plus a server-owned field.
+        async with session.put(REST_URL + "/api/task/" + tid,
+                               json={"title": "after", "priority": "high",
+                                     "assignee": "cc7",
+                                     "result": "should-not-stick"}) as r:
+            assert r.status == 200
+            data = await r.json()
+    # Editable fields applied in the response the modal reads back.
+    assert data["task"]["title"] == "after"
+    assert data["task"]["priority"] == "high"
+    assert data["task"]["assignee"] == "cc7"
+    # result is server-owned and must not be settable via this path.
+    assert data["task"].get("result") != "should-not-stick"
+    # Server state is authoritative: a subsequent refetch sees the same values.
+    t = next(x for x in started_broker.state["tasks"] if x["id"] == tid)
+    assert t["title"] == "after"
+    assert t["priority"] == "high"
+    assert t["assignee"] == "cc7"
+    assert t.get("result") != "should-not-stick"
+
+
+@pytest.mark.asyncio
+async def test_http_put_task_clears_assignee(started_broker):
+    """The modal's assignee dropdown includes an Unassigned option; selecting it
+    PUTs assignee="" and the broker must clear the field, not reject the empty
+    string as a no-op patch."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "owned", "assignee": "cc3"}) as r:
+            assert r.status == 200
+            tid = (await r.json())["task"]["id"]
+        async with session.put(REST_URL + "/api/task/" + tid,
+                               json={"assignee": ""}) as r:
+            assert r.status == 200
+            data = await r.json()
+    assert data["task"]["assignee"] == ""
+    t = next(x for x in started_broker.state["tasks"] if x["id"] == tid)
+    assert t["assignee"] == ""
+
+
+@pytest.mark.asyncio
+async def test_http_delete_task_removes(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/task",
+                                json={"title": "trash"}) as r:
+            tid = (await r.json())["task"]["id"]
+        async with session.delete(REST_URL + "/api/task/" + tid) as r:
+            assert r.status == 200
+            data = await r.json()
+    assert data["ok"] is True
+    assert data["removed"] == 1
+    assert not any(x["id"] == tid for x in started_broker.state["tasks"])
+    # deleting again is a no-op (idempotent), removed=0
+    async with aiohttp.ClientSession() as session:
+        async with session.delete(REST_URL + "/api/task/" + tid) as r:
+            assert r.status == 200
+            assert (await r.json())["removed"] == 0
+
+
+@pytest.mark.asyncio
 async def test_http_post_memory_writes(started_broker):
     async with aiohttp.ClientSession() as session:
         async with session.post(REST_URL + "/api/memory",
@@ -1065,6 +1288,149 @@ async def test_http_post_memory_writes(started_broker):
     assert data["memory"]["value"] == "{pct, ticker}"
     assert data["memory"]["type"] == "contract"
     assert any(m["key"] == "API_SHAPE" for m in started_broker.state["memory"])
+
+
+@pytest.mark.asyncio
+async def test_http_post_approval_requires_action(started_broker):
+    """REST create rejects an empty action — mirrors the web form validation."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/approval",
+                                json={"risk": "high"}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "action" in err.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_http_approval_create_and_respond_flow(started_broker):
+    """Create via REST, see it pending in the list, approve it, confirm the
+    status flips and the decision is recorded. This is the exact path the web
+    approvals page drives (POST /api/approval, then POST /api/approval/{id}/respond)."""
+    async with aiohttp.ClientSession() as session:
+        # Create
+        async with session.post(REST_URL + "/api/approval",
+                                json={"from": "cc1", "action": "test",
+                                      "risk": "high", "detail": "ship it"}) as r:
+            assert r.status == 200
+            created = await r.json()
+        assert created["ok"] is True
+        ap = created["approval"]
+        ap_id = ap["id"]
+        assert ap["action"] == "test"
+        assert ap["risk"] == "high"
+        assert ap["detail"] == "ship it"
+        assert ap["status"] == "pending"
+
+        # Listed as pending
+        async with session.get(REST_URL + "/api/approvals") as r:
+            assert r.status == 200
+            listing = await r.json()
+        match = next((a for a in listing["approvals"] if a["id"] == ap_id), None)
+        assert match is not None and match["status"] == "pending"
+
+        # Approve
+        async with session.post(REST_URL + f"/api/approval/{ap_id}/respond",
+                                json={"approved": True}) as r:
+            assert r.status == 200
+            decided = await r.json()
+        assert decided["ok"] is True
+        assert decided["approval"]["status"] == "approved"
+        assert decided["approval"]["decision"] is True
+        assert decided["approval"].get("decided_at")
+
+    # Server state reflects the decision (server-authoritative, not client-reconciled).
+    stored = next(a for a in started_broker.state["approvals"] if a["id"] == ap_id)
+    assert stored["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_http_approval_respond_unknown_id_404(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/approval/AP999/respond",
+                                json={"approved": False}) as r:
+            assert r.status == 404
+
+
+@pytest.mark.asyncio
+async def test_http_post_vote_requires_two_options(started_broker):
+    """REST create rejects a vote with fewer than two options — mirrors the web
+    form validation on the votes page."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "ship?", "options": ["yes"]}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "option" in err.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_http_vote_create_list_cast_flow(started_broker):
+    """Create via REST, see it open in the list, cast a ballot, confirm the
+    ballot is recorded. This is the exact path the web votes page drives
+    (POST /api/vote, GET /api/votes, then POST /api/vote/{id}/cast — the
+    brokerCastVote helper). With no online instances the required voter set is
+    just {"you"}, so a single "you" ballot auto-resolves the vote."""
+    async with aiohttp.ClientSession() as session:
+        # Create
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "which target",
+                                      "options": ["staging", "prod"]}) as r:
+            assert r.status == 200
+            created = await r.json()
+        assert created["ok"] is True
+        v = created["vote"]
+        vid = v["id"]
+        assert v["question"] == "which target"
+        assert v["options"] == ["staging", "prod"]
+        assert v["status"] == "open"
+        assert v["ballots"] == {}
+
+        # Listed as open
+        async with session.get(REST_URL + "/api/votes") as r:
+            assert r.status == 200
+            listing = await r.json()
+        match = next((x for x in listing["votes"] if x["id"] == vid), None)
+        assert match is not None and match["status"] == "open"
+
+        # Cast — brokerCastVote omits the voter; broker defaults it to "you".
+        async with session.post(REST_URL + f"/api/vote/{vid}/cast",
+                                json={"option": "prod"}) as r:
+            assert r.status == 200
+            casted = await r.json()
+        assert casted["ok"] is True
+        assert casted["vote"]["ballots"]["you"] == "prod"
+
+    # Server state records the ballot (server-authoritative). With "you" the
+    # only required voter, the vote auto-resolves with that ballot as winner.
+    stored = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+    assert stored["ballots"]["you"] == "prod"
+    assert stored["status"] == "resolved"
+    assert stored["winner"] == "prod"
+
+
+@pytest.mark.asyncio
+async def test_http_vote_cast_rejects_invalid_option(started_broker):
+    """Casting an option not on the ballot is a 400 — the broker validates the
+    choice against the vote's option set."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/vote",
+                                json={"question": "q",
+                                      "options": ["a", "b"]}) as r:
+            assert r.status == 200
+            vid = (await r.json())["vote"]["id"]
+        async with session.post(REST_URL + f"/api/vote/{vid}/cast",
+                                json={"option": "c"}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "option" in err.get("error", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_http_vote_cast_unknown_id_404(started_broker):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/vote/V999/cast",
+                                json={"option": "a"}) as r:
+            assert r.status == 404
 
 
 @pytest.mark.asyncio
@@ -1215,6 +1581,75 @@ async def test_flow_rate_limit(started_broker):
             throttled = [a for a in started_broker.state["audit"]
                          if a.get("action") == "flow_throttled"]
             assert len(throttled) >= 1
+
+
+@pytest.mark.asyncio
+async def test_http_flow_rest_lifecycle(started_broker):
+    """REST flow lifecycle the Automations page drives: create, list, toggle,
+    fire, delete, plus regex validation and audit entries."""
+    async with aiohttp.ClientSession() as session:
+        # reject invalid regex in trigger
+        async with session.post(REST_URL + "/api/flow",
+                                json={"name": "bad", "trigger": "("}) as r:
+            assert r.status == 400
+            err = await r.json()
+            assert "regex" in err.get("error", "").lower()
+
+        # create a valid flow
+        async with session.post(REST_URL + "/api/flow",
+                                json={"name": "deploy-notify",
+                                      "trigger": r"\bdeploy\b",
+                                      "action": "send cc2 deploy seen"}) as r:
+            assert r.status == 200
+            created = await r.json()
+        assert created["ok"] is True
+        fid = created["flow"]["id"]
+        assert created["flow"]["name"] == "deploy-notify"
+        assert created["flow"]["enabled"] is True
+
+        # it shows up in the list
+        async with session.get(REST_URL + "/api/flows") as r:
+            assert r.status == 200
+            listed = await r.json()
+        assert any(f["id"] == fid for f in listed["flows"])
+
+        # toggle to disabled
+        async with session.post(REST_URL + f"/api/flow/{fid}/toggle",
+                                json={"enabled": False}) as r:
+            assert r.status == 200
+            toggled = await r.json()
+        assert toggled["flow"]["enabled"] is False
+        assert next(f for f in started_broker.state["flows"]
+                    if f["id"] == fid)["enabled"] is False
+
+        # toggle with no body flips it back on
+        async with session.post(REST_URL + f"/api/flow/{fid}/toggle",
+                                json={}) as r:
+            assert r.status == 200
+            toggled2 = await r.json()
+        assert toggled2["flow"]["enabled"] is True
+
+        # fire records an audit entry
+        async with session.post(REST_URL + f"/api/flow/{fid}/fire",
+                                json={}) as r:
+            assert r.status == 200
+            fired = await r.json()
+        assert fired["ok"] is True
+        fires = [a for a in started_broker.state["audit"]
+                 if a.get("action") == "flow_fire" and fid in a.get("detail", "")]
+        assert len(fires) >= 1
+
+        # firing an unknown flow is a 404
+        async with session.post(REST_URL + "/api/flow/F999/fire",
+                                json={}) as r:
+            assert r.status == 404
+
+        # delete removes it from state and the list
+        async with session.delete(REST_URL + f"/api/flow/{fid}") as r:
+            assert r.status == 200
+            deleted = await r.json()
+        assert deleted["removed"] == 1
+        assert not any(f["id"] == fid for f in started_broker.state["flows"])
 
 
 # ----------------------- mDNS / Zeroconf -----------------------
@@ -1410,6 +1845,66 @@ async def test_plugin_rest_endpoints(started_broker, tmp_path):
 
 
 # ============================================================================
+# Channels (server-side groups) — backs the dashboard Channels page
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_http_channels_create_list_delete(started_broker):
+    """REST channel lifecycle the Channels page drives: POST /api/channels creates
+    a named group with members; GET /api/channels lists it with its members so the
+    page can show a member count; DELETE removes it. Server state is authoritative
+    throughout — the page never tracks membership client-side."""
+    async with aiohttp.ClientSession() as session:
+        # Create a channel with two members.
+        async with session.post(REST_URL + "/api/channels",
+                                json={"name": "deploy-crew",
+                                      "members": ["cc1", "cc2"]}) as r:
+            assert r.status == 200
+            created = await r.json()
+        assert created["ok"] is True
+        cid = created["channel"]["id"]
+        assert created["channel"]["name"] == "deploy-crew"
+        assert created["channel"]["members"] == ["cc1", "cc2"]
+
+        # It shows up on GET /api/channels (what the page polls), with the
+        # members the count is derived from.
+        async with session.get(REST_URL + "/api/channels") as r:
+            assert r.status == 200
+            listing = await r.json()
+        row = next(c for c in listing["channels"] if c["id"] == cid)
+        assert row["name"] == "deploy-crew"
+        assert len(row["members"]) == 2
+
+        # Delete removes it from server state and the listing.
+        async with session.delete(REST_URL + f"/api/channels/{cid}") as r:
+            assert r.status == 200
+            deleted = await r.json()
+        assert deleted["ok"] is True
+        assert deleted["removed"] == 1
+
+        async with session.get(REST_URL + "/api/channels") as r:
+            assert r.status == 200
+            after = await r.json()
+        assert all(c["id"] != cid for c in after["channels"])
+
+    assert cid not in started_broker.state.get("channels", {})
+
+
+@pytest.mark.asyncio
+async def test_http_channels_create_requires_member(started_broker):
+    """The create form requires at least one member; the broker rejects an empty
+    member list so a malformed POST never lands in state."""
+    before = len(started_broker.state.get("channels", {}))
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + "/api/channels",
+                                json={"name": "empty", "members": []}) as r:
+            assert r.status == 400
+            err = await r.json()
+    assert "member" in err.get("error", "").lower()
+    assert len(started_broker.state.get("channels", {})) == before
+
+
+# ============================================================================
 # Banner / startup output
 # ============================================================================
 
@@ -1424,3 +1919,249 @@ def test_print_banner_emits_key_lines(capsys):
     assert "http://localhost:8765/api/" in out
     assert "ws://localhost:8766" in out
     assert "python connect.py" in out
+
+
+# ============================================================================
+# Channels (server-side groups)
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_channel_create_list_and_fanout(started_broker):
+    """A channel created over REST fans a /api/send out to its members only,
+    tags each delivered message with the channel id, and excludes non-members."""
+    async with websockets.connect(WS_URL) as ws1, \
+               websockets.connect(WS_URL) as ws2, \
+               websockets.connect(WS_URL) as ws3:
+        await _register(ws1, iid="cc1")
+        await _register(ws2, iid="cc2")
+        await _register(ws3, iid="cc3")
+        await asyncio.sleep(0.05)
+
+        async with aiohttp.ClientSession() as session:
+            # create a channel with cc1 + cc2 as members (cc3 left out)
+            async with session.post(
+                REST_URL + "/api/channels",
+                json={"name": "#deployments", "members": ["cc1", "cc2"]},
+            ) as r:
+                assert r.status == 200
+                created = await r.json()
+            cid = created["channel"]["id"]
+            assert created["channel"]["name"] == "#deployments"
+            assert created["channel"]["members"] == ["cc1", "cc2"]
+
+            # it shows up in the channel list
+            async with session.get(REST_URL + "/api/channels") as r:
+                assert r.status == 200
+                listing = await r.json()
+            assert any(c["id"] == cid for c in listing["channels"])
+
+            # send to the channel
+            async with session.post(
+                REST_URL + "/api/send",
+                json={"from": "web-ui", "to": f"channel:{cid}", "text": "ship it"},
+            ) as r:
+                assert r.status == 200
+                sent = await r.json()
+            # one message per member, each tagged with the channel id
+            assert sent["channel"] == cid
+            assert len(sent["messages"]) == 2
+            assert all(m["channel"] == cid for m in sent["messages"])
+
+        # both members receive it, tagged with the channel
+        got1 = await _recv_until(
+            ws1, lambda p: p.get("type") == "message" and p.get("text") == "ship it")
+        got2 = await _recv_until(
+            ws2, lambda p: p.get("type") == "message" and p.get("text") == "ship it")
+        assert got1["channel"] == cid
+        assert got2["channel"] == cid
+
+        # the non-member (cc3) does not receive the channel message
+        try:
+            raw = await asyncio.wait_for(ws3.recv(), timeout=0.3)
+            payload = json.loads(raw)
+            assert not (payload.get("type") == "message"
+                        and payload.get("text") == "ship it")
+        except asyncio.TimeoutError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_channel_update_members_and_delete(started_broker):
+    """Channel membership can be edited over REST and the channel deleted; a
+    send to an unknown / empty channel is rejected rather than broadcast."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            REST_URL + "/api/channels",
+            json={"name": "#ops", "members": ["cc1"]},
+        ) as r:
+            assert r.status == 200
+            cid = (await r.json())["channel"]["id"]
+
+        # add cc2 as a member
+        async with session.put(
+            REST_URL + f"/api/channels/{cid}",
+            json={"members": ["cc1", "cc2"]},
+        ) as r:
+            assert r.status == 200
+            assert (await r.json())["channel"]["members"] == ["cc1", "cc2"]
+
+        # sending to an unknown channel is a 404, never a silent broadcast
+        async with session.post(
+            REST_URL + "/api/send",
+            json={"to": "channel:ch_nope123", "text": "x"},
+        ) as r:
+            assert r.status == 404
+
+        # delete removes it from the listing
+        async with session.delete(REST_URL + f"/api/channels/{cid}") as r:
+            assert r.status == 200
+            assert (await r.json())["removed"] == 1
+        async with session.get(REST_URL + "/api/channels") as r:
+            listing = await r.json()
+        assert not any(c["id"] == cid for c in listing["channels"])
+
+
+# --------------------------------------------------------------------------
+# TypeScript client (clients/connect.ts) blocking helpers.
+#
+# These drive the REAL MeshClient via a tiny Node harness (tests/ts_client_
+# harness.mjs) that imports connect.ts with Node's type-stripping. Each helper
+# connects to the live broker over a websocket exactly like the Python client,
+# so we exercise the actual approveAndWait / voteAndWait wire handling.
+# --------------------------------------------------------------------------
+
+_NODE_BIN = shutil.which("node")
+_HARNESS = Path(__file__).resolve().parent / "ts_client_harness.mjs"
+
+# Node 22+ is required (global WebSocket + experimental type stripping). Skip
+# cleanly on older/no Node so the Python suite stays green everywhere.
+_ts_skip = pytest.mark.skipif(
+    _NODE_BIN is None,
+    reason="node not installed; TypeScript client harness cannot run",
+)
+
+
+async def _run_ts_harness(mode: str, instance_id: str):
+    """Spawn the Node harness and return the live asyncio subprocess handle."""
+    env = dict(os.environ)
+    env["BROKER_URL"] = WS_URL
+    env["MODE"] = mode
+    env["INSTANCE_ID"] = instance_id
+    proc = await asyncio.create_subprocess_exec(
+        _NODE_BIN, "--experimental-strip-types", str(_HARNESS),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    return proc
+
+
+def _parse_harness_line(raw: bytes) -> dict:
+    """The harness prints exactly one JSON line on stdout (warnings go stderr)."""
+    for line in raw.decode().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "ok" in obj:
+            return obj
+    raise AssertionError(f"no JSON result line from harness; raw={raw!r}")
+
+
+async def _wait_for_approval(broker, from_id: str, timeout: float = 4.0) -> str:
+    """Poll broker state until the TS instance's approval_request lands."""
+    end = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < end:
+        ap = next((a for a in broker.state["approvals"]
+                   if a.get("from") == from_id and a.get("status") == "pending"), None)
+        if ap is not None:
+            return ap["id"]
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"approval from {from_id} never appeared")
+
+
+async def _wait_for_open_vote(broker, created_by: str, timeout: float = 4.0) -> str:
+    end = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < end:
+        v = next((x for x in broker.state["votes"]
+                  if x.get("created_by") == created_by and x.get("status") == "open"), None)
+        if v is not None:
+            return v["id"]
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"open vote by {created_by} never appeared")
+
+
+@_ts_skip
+@pytest.mark.asyncio
+async def test_ts_client_approve_and_wait(started_broker):
+    """The TS client's approveAndWait resolves with the human decision, and
+    returns null when no decision arrives before the timeout."""
+    # --- happy path: UI approves -> Promise resolves true ---
+    proc = await _run_ts_harness("approve", "tsapprove")
+    try:
+        ap_id = await _wait_for_approval(started_broker, "tsapprove")
+        await _ui_approve_pending(ap_id, True)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except Exception:
+        proc.kill()
+        raise
+    res = _parse_harness_line(out)
+    assert res["ok"] is True, f"harness failed: {res} stderr={err.decode()[-500:]}"
+    assert res["result"] is True
+
+    # --- timeout path: no decision -> Promise resolves null ---
+    proc2 = await _run_ts_harness("approve_timeout", "tsapprovetimeout")
+    try:
+        out2, err2 = await asyncio.wait_for(proc2.communicate(), timeout=10)
+    except Exception:
+        proc2.kill()
+        raise
+    res2 = _parse_harness_line(out2)
+    assert res2["ok"] is True, f"harness failed: {res2} stderr={err2.decode()[-500:]}"
+    assert res2["result"] is None, "approveAndWait should return null on timeout"
+
+
+@_ts_skip
+@pytest.mark.asyncio
+async def test_ts_client_vote_and_wait(started_broker):
+    """The TS client's voteAndWait creates a vote, and once two instances cast
+    the matching ballot to meet the threshold, resolves to the winner.
+    A threshold that can never be met returns null on timeout."""
+    # --- happy path: TS creates a threshold-2 vote; two peers cast "yes" ---
+    proc = await _run_ts_harness("vote", "tsvote")
+    peers = []
+    try:
+        vid = await _wait_for_open_vote(started_broker, "tsvote")
+        # Two plain Python ws instances cast the same option so the threshold
+        # of 2 is met and the broker broadcasts vote_resolved to the creator.
+        for iid in ("cc2", "cc3"):
+            p = await websockets.connect(WS_URL)
+            await _register(p, iid=iid)
+            peers.append(p)
+            await p.send(json.dumps({"type": "vote_cast", "vote_id": vid, "option": "yes"}))
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except Exception:
+        proc.kill()
+        raise
+    finally:
+        for p in peers:
+            await p.close()
+    res = _parse_harness_line(out)
+    assert res["ok"] is True, f"harness failed: {res} stderr={err.decode()[-500:]}"
+    assert res["result"] == "yes"
+    v = next(x for x in started_broker.state["votes"] if x["id"] == vid)
+    assert v["status"] == "resolved" and v["winner"] == "yes"
+
+    # --- timeout path: unmeetable threshold -> Promise resolves null ---
+    proc2 = await _run_ts_harness("vote_timeout", "tsvotetimeout")
+    try:
+        out2, err2 = await asyncio.wait_for(proc2.communicate(), timeout=10)
+    except Exception:
+        proc2.kill()
+        raise
+    res2 = _parse_harness_line(out2)
+    assert res2["ok"] is True, f"harness failed: {res2} stderr={err2.decode()[-500:]}"
+    assert res2["result"] is None, "voteAndWait should return null on timeout"
