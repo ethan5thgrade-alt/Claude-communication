@@ -6,6 +6,12 @@ type Params = { params: Promise<{ slug: string; path: string[] }> }
 async function proxy(req: NextRequest, { params }: Params): Promise<NextResponse> {
   const { slug, path } = await params
   try {
+    // Reject anything that could escape the /api/ namespace ("..", encoded
+    // slashes, dots) before it is joined into the upstream path. Broker REST
+    // segments are all plain [a-z0-9_-] tokens (endpoint names + ids).
+    if (!path.every((seg) => /^[A-Za-z0-9_-]+$/.test(seg))) {
+      return NextResponse.json({ error: "Invalid broker path." }, { status: 400 })
+    }
     const broker = await resolveBroker(slug)
     const search = req.nextUrl.search ?? ""
     const upstreamPath = "/api/" + path.join("/") + search

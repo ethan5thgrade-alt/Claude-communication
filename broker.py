@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -57,6 +58,13 @@ MAX_AUDIT_IN_STATE = 1000
 # mDNS / Zeroconf service type for agent-mesh broker advertisement.
 MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 DEFAULT_PLUGINS_DIR = Path.home() / ".claude" / "plugins" / "cache"
+
+# Workspace allowlist. When MESH_WORKSPACES_FILE points at a JSON file the
+# broker is workspace-aware: every register frame must name a slug present in
+# the file, and that slug resolves to a stable workspace_id surfaced to the
+# dashboard. When unset the broker is workspace-agnostic (single-tenant dev),
+# mirroring the opt-in posture of MESH_TOKEN.
+DEFAULT_WORKSPACES_FILE_ENV = "MESH_WORKSPACES_FILE"
 
 # Per-instance offline backlog cap (bytes). Evicts oldest entries when exceeded.
 BACKLOG_BYTE_BUDGET = 256 * 1024  # 256 KB
@@ -139,6 +147,56 @@ def _generate_invite_code(length: int = 8) -> str:
     chars = string.ascii_uppercase + string.digits
     return "".join(random.choices(chars, k=length))
 
+
+def _load_workspaces(source: Optional[Any]) -> Optional[dict[str, dict]]:
+    """Load the workspace allowlist into a {slug: {id, name?}} mapping.
+
+    `source` may be a path (str/Path) to a JSON file, an already-parsed mapping
+    or list, or None. Two JSON shapes are accepted:
+
+        ["acme", "beta"]                                   # slugs only
+        {"acme": {"id": "ws_acme", "name": "Acme"}, ...}   # full records
+
+    For the list shape (or a record missing "id") the slug doubles as the id.
+    Returns None when no allowlist is configured (workspace-agnostic mode), or
+    an empty dict when the file exists but is empty/unparseable (deny-all).
+    """
+    if source is None:
+        return None
+    if isinstance(source, (dict, list)):
+        raw: Any = source
+    else:
+        p = Path(source)
+        if not p.exists():
+            log.warning(f"Workspaces file not found: {p}; treating as deny-all")
+            return {}
+        try:
+            with open(p, "r") as f:
+                raw = json.load(f)
+        except Exception as e:
+            log.warning(f"Failed to parse workspaces file {p}: {e}; deny-all")
+            return {}
+    out: dict[str, dict] = {}
+    if isinstance(raw, list):
+        for slug in raw:
+            slug = str(slug).strip()
+            if slug:
+                out[slug] = {"id": slug, "name": slug}
+    elif isinstance(raw, dict):
+        for slug, rec in raw.items():
+            slug = str(slug).strip()
+            if not slug:
+                continue
+            if isinstance(rec, dict):
+                wid = str(rec.get("id") or slug)
+                name = str(rec.get("name") or slug)
+            else:
+                wid, name = slug, str(rec or slug)
+            out[slug] = {"id": wid, "name": name}
+    else:
+        log.warning("Workspaces config is neither list nor object; deny-all")
+    return out
+
 DEFAULT_ROOM = "default"
 
 
@@ -188,7 +246,8 @@ class Broker:
                  state_path: Path = STATE_PATH,
                  backup_interval_seconds: float = DEFAULT_BACKUP_INTERVAL_SECONDS,
                  auth_token: Optional[str] = None,
-                 plugins_dir: Optional[Path] = None):
+                 plugins_dir: Optional[Path] = None,
+                 workspaces: Optional[Any] = None):
         self.ui_port = ui_port
         self.instance_port = instance_port
         self.state_path = state_path
@@ -196,6 +255,10 @@ class Broker:
         # Optional shared-token auth. None or empty string => auth disabled.
         self.auth_token: Optional[str] = auth_token or None
         self.plugins_dir = Path(plugins_dir) if plugins_dir is not None else DEFAULT_PLUGINS_DIR
+        # Workspace allowlist: None => workspace-agnostic; dict => slug-gated.
+        # `workspaces` accepts a path, a parsed mapping, or None (see
+        # _load_workspaces). Empty dict means "configured but no slugs" => deny.
+        self.workspaces: Optional[dict[str, dict]] = _load_workspaces(workspaces)
 
         self.lock = asyncio.Lock()
         self.state: dict = empty_state()
@@ -255,6 +318,24 @@ class Broker:
 
     def online_instance_count(self) -> int:
         return sum(1 for info in self.instances.values() if info.get("online"))
+
+    # ------------------- workspace allowlist -------------------
+    def _resolve_workspace(self, slug: Optional[str]) -> Optional[tuple[str, str]]:
+        """Validate a register frame's workspace_slug against the allowlist.
+
+        Returns (slug, workspace_id) when the slug is permitted, or None when
+        it is rejected. In workspace-agnostic mode (self.workspaces is None) any
+        slug is accepted; an empty slug resolves to the empty-string workspace
+        so single-tenant dev setups keep working unchanged. When an allowlist is
+        configured, the slug must be a non-empty key in it."""
+        slug = (slug or "").strip()
+        if self.workspaces is None:
+            # workspace-agnostic: echo the slug back, derive id from slug.
+            return (slug, slug)
+        rec = self.workspaces.get(slug)
+        if not rec:
+            return None
+        return (slug, str(rec.get("id") or slug))
 
     # ------------------- state persistence -------------------
     def _pre_migration_backup(self, source_version: int) -> None:
@@ -474,7 +555,27 @@ class Broker:
         self.state["counters"][prefix] = self.state["counters"].get(prefix, 0) + 1
         return f"{prefix}{self.state['counters'][prefix]:03d}"
 
+    def _next_msg_id(self) -> str:
+        # Monotonic message id from a dedicated counter, NOT len(messages).
+        # _prune_state_inplace truncates the list, so len() resets downward and
+        # the old f"msg-{len()+1}" scheme reissued ids that pruned-but-still-
+        # referenced messages (and the cloud broker_msg_id dedup) had used.
+        # Floored once at len() so it can never collide with legacy ids written
+        # before this counter existed. Callers must hold self.lock (mutates
+        # counters, same contract as next_id()).
+        n = max(self.state["counters"].get("msg", 0), len(self.state["messages"])) + 1
+        self.state["counters"]["msg"] = n
+        return f"msg-{n}"
+
     def audit(self, agent: str, action: str, detail: str = ""):
+        # next_id() and the append below contain no await points, so under
+        # asyncio's single-threaded cooperative model this read-modify-write
+        # of the audit counter and list runs atomically with respect to other
+        # coroutines. Callers that mutate other state alongside an audit must
+        # still hold self.lock so the whole mutation is atomic; audit() itself
+        # must not acquire self.lock because it is invoked from many contexts
+        # that already hold it (and from synchronous, non-async contexts such
+        # as the backup/migration paths), and self.lock is non-reentrant.
         entry = {
             "id": self.next_id("A"),
             "ts": now_iso(),
@@ -529,19 +630,32 @@ class Broker:
             await self.send_to_instance(iid, payload)
 
     # ------------------- instances meta -------------------
-    def instances_snapshot(self, room: Optional[str] = None) -> list[dict]:
+    def instances_snapshot(self, room: Optional[str] = None,
+                           workspace: Optional[str] = None) -> list[dict]:
         """Return a list of instance info dicts.
 
-        If `room` is provided, only return instances in that room.
+        If `room` is provided, only return instances in that room. If
+        `workspace` is provided, only return instances whose workspace_slug OR
+        workspace_id matches it (the dashboard passes a slug; accepting either
+        keeps callers that hold only the id working too).
         """
+        def _ws_match(slug: str, wid: str) -> bool:
+            if workspace is None:
+                return True
+            return workspace == slug or workspace == wid
+
         out = []
         seen = set()
         for iid, info in self.instances.items():
             inst_room = info.get("room", DEFAULT_ROOM)
             if room is not None and inst_room != room:
                 continue
-            seen.add(iid)
             meta = self.state["instances_meta"].get(iid, {})
+            ws_slug = info.get("workspace_slug", meta.get("workspace_slug", ""))
+            ws_id = info.get("workspace_id", meta.get("workspace_id", ""))
+            if not _ws_match(ws_slug, ws_id):
+                continue
+            seen.add(iid)
             out.append({
                 "id": iid,
                 "name": info.get("name", iid),
@@ -554,6 +668,8 @@ class Broker:
                 "role": meta.get("role", ""),
                 "paused": meta.get("paused", False),
                 "room": inst_room,
+                "workspace_slug": ws_slug,
+                "workspace_id": ws_id,
             })
         # include persisted-but-offline instances
         for iid, meta in self.state["instances_meta"].items():
@@ -561,6 +677,10 @@ class Broker:
                 continue
             inst_room = meta.get("room", DEFAULT_ROOM)
             if room is not None and inst_room != room:
+                continue
+            ws_slug = meta.get("workspace_slug", "")
+            ws_id = meta.get("workspace_id", "")
+            if not _ws_match(ws_slug, ws_id):
                 continue
             out.append({
                 "id": iid,
@@ -574,6 +694,8 @@ class Broker:
                 "role": meta.get("role", ""),
                 "paused": meta.get("paused", False),
                 "room": inst_room,
+                "workspace_slug": ws_slug,
+                "workspace_id": ws_id,
             })
         return out
 
@@ -603,9 +725,13 @@ class Broker:
                 winner = qualifying[0]
 
         # all-voted path
+        vote_room = vote.get("room", DEFAULT_ROOM)
         if winner is None:
-            # required voter set = all currently-online instances + "you"
-            online_ids = {iid for iid, info in self.instances.items() if info.get("online")}
+            # required voter set = currently-online instances in the vote's room + "you"
+            online_ids = {
+                iid for iid, info in self.instances.items()
+                if info.get("online") and info.get("room", DEFAULT_ROOM) == vote_room
+            }
             required = online_ids | {"you"}
             voted = set(ballots.keys())
             if required and required.issubset(voted):
@@ -633,7 +759,7 @@ class Broker:
             "winner": winner,
             "vote": vote,
         }
-        await self.broadcast_instances(payload)
+        await self.broadcast_instances(payload, room=vote_room)
         await self.broadcast_ui(payload)
 
     # ------------------- plugin catalog -------------------
@@ -909,29 +1035,33 @@ class Broker:
             rendered = self._render_template(template, entry, m)
             if kind == "send":
                 to = params["to"]
-                payload = {
-                    "type": "message",
-                    "id": f"flow-{fid}-{len(self.state['messages']) + 1}",
+                message = {
                     "from": "flow",
                     "to": to,
                     "text": rendered,
                     "ts": now_iso(),
                     "flow": fid,
                 }
-                await self.send_to_instance(to, payload)
+                async with self.lock:
+                    message["id"] = self._next_msg_id()
+                    self.state["messages"].append(message)
+                    self.schedule_write()
+                await self.send_to_instance(to, {"type": "message", **message})
                 await self.broadcast_ui({"type": "flow_fired", "id": fid,
                                           "to": to, "text": rendered})
             elif kind == "broadcast":
-                payload = {
-                    "type": "message",
-                    "id": f"flow-{fid}-{len(self.state['messages']) + 1}",
+                message = {
                     "from": "flow",
                     "to": "all",
                     "text": rendered,
                     "ts": now_iso(),
                     "flow": fid,
                 }
-                await self.broadcast_instances(payload)
+                async with self.lock:
+                    message["id"] = self._next_msg_id()
+                    self.state["messages"].append(message)
+                    self.schedule_write()
+                await self.broadcast_instances({"type": "message", **message})
                 await self.broadcast_ui({"type": "flow_fired", "id": fid,
                                           "to": "all", "text": rendered})
             elif kind == "webhook":
@@ -954,8 +1084,8 @@ class Broker:
                 mtype = msg.get("type")
 
                 if mtype == "register":
-                    # Shared-token auth (optional)
-                    if self.auth_token and msg.get("token") != self.auth_token:
+                    # Shared-token auth (optional), constant-time
+                    if not self._token_ok(msg.get("token")):
                         try:
                             await ws.send(json.dumps({
                                 "type": "auth_failed",
@@ -977,6 +1107,29 @@ class Broker:
                     role_in = (msg.get("role") or "").strip()
                     room = (msg.get("room") or DEFAULT_ROOM).strip() or DEFAULT_ROOM
 
+                    # Workspace allowlist. When configured (MESH_WORKSPACES_FILE),
+                    # an unknown/missing slug is rejected before the instance is
+                    # tracked — the dashboard later filters by the resolved id.
+                    resolved_ws = self._resolve_workspace(msg.get("workspace_slug"))
+                    if resolved_ws is None:
+                        bad_slug = (msg.get("workspace_slug") or "").strip()
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "register_failed",
+                                "reason": "unknown workspace",
+                                "workspace_slug": bad_slug,
+                            }))
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
+                        self.audit(instance_id, "register_rejected",
+                                   f"workspace_slug={bad_slug or '-'}")
+                        try:
+                            await ws.close()
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
+                        return
+                    workspace_slug, workspace_id = resolved_ws
+
                     async with self.lock:
                         existing = self.instances.get(instance_id)
                         if existing and existing.get("ws") is not ws:
@@ -995,10 +1148,14 @@ class Broker:
                             "task": "",
                             "workload": 0,
                             "room": room,
+                            "workspace_slug": workspace_slug,
+                            "workspace_id": workspace_id,
                         }
                         # persist meta
                         meta = self.state["instances_meta"].setdefault(instance_id, {})
-                        meta.update({"name": name, "project": project, "room": room})
+                        meta.update({"name": name, "project": project, "room": room,
+                                     "workspace_slug": workspace_slug,
+                                     "workspace_id": workspace_id})
                         if email:
                             meta["email"] = email
                         if role_in:
@@ -1007,7 +1164,8 @@ class Broker:
                         meta.setdefault("email", "")
                         meta.setdefault("paused", False)
                         self.audit(instance_id, "register",
-                                   f"name={name} project={project} email={email or '-'} room={room}")
+                                   f"name={name} project={project} email={email or '-'} "
+                                   f"room={room} workspace={workspace_slug or '-'}")
                         self.schedule_write()
 
                     # send memory init (room-scoped)
@@ -1063,7 +1221,6 @@ class Broker:
                     if not text:
                         continue
                     entry = {
-                        "id": f"msg-{len(self.state['messages']) + 1}",
                         "from": instance_id,
                         "to": to,
                         "text": text,
@@ -1071,6 +1228,7 @@ class Broker:
                         "room": sender_room,
                     }
                     async with self.lock:
+                        entry["id"] = self._next_msg_id()
                         self.state["messages"].append(entry)
                         self.audit(instance_id, "message", f"to={to} room={sender_room}")
                         self.schedule_write()
@@ -1164,7 +1322,6 @@ class Broker:
                     if not text:
                         continue
                     entry = {
-                        "id": f"msg-{len(self.state['messages']) + 1}",
                         "from": instance_id,
                         "to": "all",
                         "text": text,
@@ -1172,6 +1329,7 @@ class Broker:
                         "room": sender_room,
                     }
                     async with self.lock:
+                        entry["id"] = self._next_msg_id()
                         self.state["messages"].append(entry)
                         self.audit(instance_id, "broadcast", text[:80])
                         self.schedule_write()
@@ -1267,13 +1425,14 @@ class Broker:
                     if not instance_id:
                         continue
                     tid = msg.get("id")
-                    t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
-                    if not t:
-                        continue
-                    t["assignee"] = instance_id
-                    t["status"] = "In Progress"
-                    self.audit(instance_id, "task_claim", tid)
-                    self.schedule_write()
+                    async with self.lock:
+                        t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
+                        if not t:
+                            continue
+                        t["assignee"] = instance_id
+                        t["status"] = "In Progress"
+                        self.audit(instance_id, "task_claim", tid)
+                        self.schedule_write()
                     await self.state_update({"tasks": self.state["tasks"]})
 
                 elif mtype == "task_status":
@@ -1281,12 +1440,13 @@ class Broker:
                         continue
                     tid = msg.get("id")
                     status = msg.get("status", "")
-                    t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
-                    if not t or not status:
-                        continue
-                    t["status"] = status
-                    self.audit(instance_id, "task_status", f"{tid}->{status}")
-                    self.schedule_write()
+                    async with self.lock:
+                        t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
+                        if not t or not status:
+                            continue
+                        t["status"] = status
+                        self.audit(instance_id, "task_status", f"{tid}->{status}")
+                        self.schedule_write()
                     await self.state_update({"tasks": self.state["tasks"]})
 
                 elif mtype == "vote_create":
@@ -1310,6 +1470,7 @@ class Broker:
                             threshold = int(threshold)
                         except Exception:
                             threshold = None
+                    sender_room = self.instances.get(instance_id, {}).get("room", DEFAULT_ROOM)
                     async with self.lock:
                         vid = self.next_id("V")
                         vote = {
@@ -1322,6 +1483,7 @@ class Broker:
                             "winner": None,
                             "created_by": instance_id,
                             "ts": now_iso(),
+                            "room": sender_room,
                         }
                         self.state["votes"].append(vote)
                         self.audit(instance_id, "vote_create", f"{vid} q={question[:40]}")
@@ -1337,26 +1499,26 @@ class Broker:
                     except Exception as e:
                         log.debug("silently swallowed exception: %r", e)
                     await self.state_update({"votes": self.state["votes"]})
-                    # notify other instances so they can cast
+                    # notify other instances in the same room so they can cast
                     await self.broadcast_instances({
                         "type": "vote_open",
                         "vote": vote,
-                    }, exclude=instance_id)
+                    }, exclude=instance_id, room=sender_room)
 
                 elif mtype == "vote_cast":
                     if not instance_id:
                         continue
                     vote_id = msg.get("vote_id")
                     option = msg.get("option")
-                    v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
-                    if not v:
-                        # unknown id — silent no-op (don't crash anyone)
-                        continue
-                    if v.get("status") != "open":
-                        continue
-                    if option not in v.get("options", []):
-                        continue
                     async with self.lock:
+                        v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
+                        if not v:
+                            # unknown id — silent no-op (don't crash anyone)
+                            continue
+                        if v.get("status") != "open":
+                            continue
+                        if option not in v.get("options", []):
+                            continue
                         v.setdefault("ballots", {})[instance_id] = option
                         self.audit(instance_id, "vote_cast", f"{vote_id}={option}")
                         self.schedule_write()
@@ -1449,8 +1611,8 @@ class Broker:
 
     # ------------------- UI WebSocket handler -------------------
     async def handle_ui_ws(self, request):
-        # Shared-token auth (optional) — must check before WS upgrade
-        if self.auth_token and request.query.get("token") != self.auth_token:
+        # Shared-token auth (optional) — must check before WS upgrade, constant-time
+        if not self._token_ok(request.query.get("token")):
             return web.Response(status=401, text="unauthorized")
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -1506,7 +1668,7 @@ class Broker:
                 async with self.lock:
                     for member in ch["members"]:
                         e = {
-                            "id": f"msg-{len(self.state['messages']) + 1}",
+                            "id": self._next_msg_id(),
                             "from": "you",
                             "to": member,
                             "text": text,
@@ -1525,7 +1687,6 @@ class Broker:
                     await self._evaluate_flows(e)
                 return
             entry = {
-                "id": f"msg-{len(self.state['messages']) + 1}",
                 "from": "you",
                 "to": to,
                 "text": text,
@@ -1534,6 +1695,7 @@ class Broker:
             if channel_in:
                 entry["channel"] = str(channel_in)
             async with self.lock:
+                entry["id"] = self._next_msg_id()
                 self.state["messages"].append(entry)
                 self.audit("you", "message", f"to={to}")
                 self.schedule_write()
@@ -1601,6 +1763,7 @@ class Broker:
                     threshold = int(threshold)
                 except Exception:
                     threshold = None
+            room = (data.get("room") or "").strip() or DEFAULT_ROOM
             async with self.lock:
                 vid = self.next_id("V")
                 vote = {
@@ -1613,11 +1776,12 @@ class Broker:
                     "winner": None,
                     "created_by": "you",
                     "ts": now_iso(),
+                    "room": room,
                 }
                 self.state["votes"].append(vote)
                 self.audit("you", "vote_create", f"{vid} q={question[:40]}")
                 self.schedule_write()
-            await self.broadcast_instances({"type": "vote_open", "vote": vote})
+            await self.broadcast_instances({"type": "vote_open", "vote": vote}, room=room)
             await self.state_update({"votes": self.state["votes"]})
 
         elif action == "create_task":
@@ -1714,12 +1878,20 @@ class Broker:
             await self.state_update({"memory": self.state["memory"]})
 
         elif action == "create_flow":
+            trigger = data.get("trigger", "")
+            if trigger:
+                try:
+                    re.compile(trigger)
+                except re.error as e:
+                    await ws.send_json({"type": "error",
+                                         "error": f"invalid regex in trigger: {e}"})
+                    return
             async with self.lock:
                 fid = self.next_id("F")
                 flow = {
                     "id": fid,
                     "name": data.get("name", ""),
-                    "trigger": data.get("trigger", ""),
+                    "trigger": trigger,
                     "action": data.get("action_desc", ""),
                     "color": data.get("color", "#888"),
                     "enabled": True,
@@ -1797,9 +1969,44 @@ class Broker:
             await ws.send_json({"type": "error", "error": f"unknown action {action}"})
 
     # ------------------- HTTP REST handlers -------------------
+    def _token_ok(self, provided) -> bool:
+        """Constant-time token comparison. True when no token is configured
+        (auth is opt-in). Using hmac.compare_digest avoids the timing oracle of
+        `!=` over a network tunnel."""
+        if not self.auth_token:
+            return True
+        return hmac.compare_digest(str(provided or ""), self.auth_token)
+
+    def _is_public_rest_path(self, method: str, path: str) -> bool:
+        # Default-deny: every /api route needs the token EXCEPT these. The
+        # dashboard and clients inject X-Mesh-Token on every fetch, so the only
+        # paths that must work pre-auth are the UI shell, health, and the
+        # friend-invite bootstrap (resolve an invite code — returns no token —
+        # and join a team with that code).
+        if path in ("/", "/ui", "/api/health"):
+            return True
+        if method == "GET" and path.startswith("/api/invite/"):
+            return True
+        if method == "POST" and re.match(r"^/api/teams/[^/]+/join$", path):
+            return True
+        return False
+
+    @web.middleware
+    async def _auth_middleware(self, request, handler):
+        """Enforce the shared token on every REST route by default. This is the
+        perimeter; per-handler _check_rest_auth calls are a redundant inner
+        check. CORS preflight (OPTIONS) is always allowed."""
+        if request.method != "OPTIONS" and not self._is_public_rest_path(
+            request.method, request.path
+        ):
+            provided = request.headers.get("X-Mesh-Token") or request.query.get("token")
+            if not self._token_ok(provided):
+                return web.json_response({"error": "unauthorized"}, status=401)
+        return await handler(request)
+
     def _check_rest_auth(self, request) -> Optional[web.Response]:
         """Return a 401 Response if auth fails, else None."""
-        if self.auth_token and request.headers.get("X-Mesh-Token") != self.auth_token:
+        if not self._token_ok(request.headers.get("X-Mesh-Token")):
             return web.json_response({"error": "unauthorized"}, status=401)
         return None
 
@@ -1945,7 +2152,7 @@ class Broker:
             async with self.lock:
                 for member in ch["members"]:
                     e = {
-                        "id": f"msg-{len(self.state['messages']) + 1}",
+                        "id": self._next_msg_id(),
                         "from": sender,
                         "to": member,
                         "text": text,
@@ -1967,7 +2174,6 @@ class Broker:
                                          "channel": cid})
 
         entry = {
-            "id": f"msg-{len(self.state['messages']) + 1}",
             "from": sender,
             "to": to,
             "text": text,
@@ -1978,6 +2184,7 @@ class Broker:
         if channel_in:
             entry["channel"] = str(channel_in)
         async with self.lock:
+            entry["id"] = self._next_msg_id()
             self.state["messages"].append(entry)
             self.audit(sender, "message",
                        f"to={to}{' channel=' + str(channel_in) if channel_in else ''} (REST)")
@@ -2186,7 +2393,9 @@ class Broker:
 
     async def http_instances(self, request):
         room = request.query.get("room") or None
-        return self._json_response(self.instances_snapshot(room=room))
+        workspace = request.query.get("workspace") or None
+        return self._json_response(
+            self.instances_snapshot(room=room, workspace=workspace))
 
     async def http_tasks(self, request):
         room = request.query.get("room") or None
@@ -2321,6 +2530,55 @@ class Broker:
         await self.state_update({"tasks": self.state["tasks"]})
         return self._json_response({"ok": True, "task": task})
 
+    # Editable task fields exposed over REST. status is the common case
+    # (column moves); assignee/priority/title/deps round it out. created_by,
+    # done_by, result and id are server-owned and never client-settable here.
+    _TASK_EDITABLE = ("status", "assignee", "priority", "title", "deps")
+
+    async def http_put_task(self, request):
+        """PUT /api/task/{tid} — update editable fields on a task.
+
+        Mirrors the update_task WS action: applies a candidate patch, rejects
+        the change if it would introduce a dependency cycle, then persists and
+        broadcasts. Status moves between columns flow through here."""
+        tid = request.match_info.get("tid", "")
+        try:
+            body = await request.json()
+        except Exception:
+            return self._json_response({"error": "invalid json"}, status=400)
+        patch = {k: v for k, v in body.items() if k in self._TASK_EDITABLE}
+        if not patch:
+            return self._json_response({"error": "no editable fields"}, status=400)
+        async with self.lock:
+            t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
+            if not t:
+                return self._json_response({"error": "task not found"}, status=404)
+            candidate = dict(t)
+            candidate.update(patch)
+            others = [x for x in self.state["tasks"] if x["id"] != tid]
+            if self.has_cycle(others + [candidate]):
+                return self._json_response(
+                    {"error": "cyclic task dependencies"}, status=400)
+            t.update(patch)
+            self.audit("you", "task_update", f"{tid} (REST)")
+            self.schedule_write()
+        await self.state_update({"tasks": self.state["tasks"]})
+        return self._json_response({"ok": True, "task": t})
+
+    async def http_delete_task(self, request):
+        """DELETE /api/task/{tid} — remove a task from the board."""
+        tid = request.match_info.get("tid", "")
+        async with self.lock:
+            before = len(self.state["tasks"])
+            self.state["tasks"] = [x for x in self.state["tasks"] if x["id"] != tid]
+            removed = len(self.state["tasks"]) < before
+            if removed:
+                self.audit("you", "task_delete", f"{tid} (REST)")
+                self.schedule_write()
+        if removed:
+            await self.state_update({"tasks": self.state["tasks"]})
+        return self._json_response({"ok": True, "removed": 1 if removed else 0})
+
     async def http_post_memory(self, request):
         try:
             body = await request.json()
@@ -2391,10 +2649,12 @@ class Broker:
         except Exception:
             return self._json_response({"error": "invalid json"}, status=400)
         decision = bool(body.get("approved", body.get("decision")))
-        ap = next((a for a in self.state["approvals"] if a["id"] == ap_id), None)
-        if not ap:
-            return self._json_response({"error": "approval not found"}, status=404)
+        # Read, validate, and mutate atomically under the lock so concurrent
+        # respond calls cannot observe a stale snapshot and clobber each other.
         async with self.lock:
+            ap = next((a for a in self.state["approvals"] if a["id"] == ap_id), None)
+            if not ap:
+                return self._json_response({"error": "approval not found"}, status=404)
             ap["status"] = "approved" if decision else "rejected"
             ap["decided_at"] = now_iso()
             ap["decision"] = decision
@@ -2437,17 +2697,19 @@ class Broker:
             except Exception:
                 threshold = None
         created_by = (body.get("from") or "you").strip() or "you"
+        room = (body.get("room") or "").strip() or DEFAULT_ROOM
         async with self.lock:
             vid = self.next_id("V")
             vote = {
                 "id": vid, "question": question, "options": list(options),
                 "ballots": {}, "threshold": threshold, "status": "open",
                 "winner": None, "created_by": created_by, "ts": now_iso(),
+                "room": room,
             }
             self.state["votes"].append(vote)
             self.audit(created_by, "vote_create", f"{vid} q={question[:40]} (REST)")
             self.schedule_write()
-        await self.broadcast_instances({"type": "vote_open", "vote": vote})
+        await self.broadcast_instances({"type": "vote_open", "vote": vote}, room=room)
         await self.broadcast_ui({"type": "votes", "votes": self.state["votes"]})
         return self._json_response({"ok": True, "vote": vote})
 
@@ -2462,14 +2724,18 @@ class Broker:
             return self._json_response({"error": "invalid json"}, status=400)
         voter = (body.get("voter") or body.get("from") or "you").strip() or "you"
         option = body.get("option") or body.get("choice")
-        v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
-        if not v:
-            return self._json_response({"error": "vote not found"}, status=404)
-        if v.get("status") != "open":
-            return self._json_response({"error": "vote closed"}, status=400)
-        if option not in v.get("options", []):
-            return self._json_response({"error": "invalid option"}, status=400)
+        # Look up, validate status/option, and record the ballot atomically under
+        # the lock. A concurrent close (status->closed/resolved) cannot slip
+        # between the check and the mutation. _maybe_resolve_vote acquires the
+        # lock itself, so it is invoked after release.
         async with self.lock:
+            v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
+            if not v:
+                return self._json_response({"error": "vote not found"}, status=404)
+            if v.get("status") != "open":
+                return self._json_response({"error": "vote closed"}, status=400)
+            if option not in v.get("options", []):
+                return self._json_response({"error": "invalid option"}, status=400)
             v.setdefault("ballots", {})[voter] = option
             self.audit(voter, "vote_cast", f"{vote_id}={option} (REST)")
             self.schedule_write()
@@ -2488,11 +2754,18 @@ class Broker:
         name = (body.get("name") or "").strip()
         if not name:
             return self._json_response({"error": "empty name"}, status=400)
+        trigger = body.get("trigger", "")
+        if trigger:
+            try:
+                re.compile(trigger)
+            except re.error as e:
+                return self._json_response(
+                    {"error": f"invalid regex in trigger: {e}"}, status=400)
         async with self.lock:
             fid = self.next_id("F")
             flow = {
                 "id": fid, "name": name,
-                "trigger": body.get("trigger", ""),
+                "trigger": trigger,
                 "action": body.get("action") or body.get("action_desc", ""),
                 "color": body.get("color", "#888"),
                 "enabled": bool(body.get("enabled", True)),
@@ -2531,6 +2804,28 @@ class Broker:
             self.audit("you", "flow_fire", f"{fid} (REST)")
             self.schedule_write()
         await self.broadcast_ui({"type": "flow_fired", "id": fid})
+        return self._json_response({"ok": True, "flow": f})
+
+    async def http_post_flow_toggle(self, request):
+        denied = self._check_rest_auth(request)
+        if denied is not None:
+            return denied
+        fid = request.match_info.get("fid")
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        f = next((x for x in self.state["flows"] if x["id"] == fid), None)
+        if not f:
+            return self._json_response({"error": "flow not found"}, status=404)
+        async with self.lock:
+            if "enabled" in body:
+                f["enabled"] = bool(body.get("enabled"))
+            else:
+                f["enabled"] = not f.get("enabled", True)
+            self.audit("you", "flow_toggle", f"{fid}={f['enabled']} (REST)")
+            self.schedule_write()
+        await self.broadcast_ui({"type": "flows", "flows": self.state["flows"]})
         return self._json_response({"ok": True, "flow": f})
 
     # ------------------- team endpoints -------------------
@@ -2655,8 +2950,10 @@ class Broker:
             self.handle_instance, "0.0.0.0", self.instance_port
         )
 
-        # aiohttp UI/REST server
-        app = web.Application()
+        # aiohttp UI/REST server. The auth middleware is the default-deny
+        # perimeter for every /api route (see _is_public_rest_path for the
+        # bootstrap exceptions).
+        app = web.Application(middlewares=[self._auth_middleware])
         app.router.add_get("/", self.http_index)
         app.router.add_get("/ui", self.handle_ui_ws)
         app.router.add_get("/api/status", self.http_status)
@@ -2675,6 +2972,8 @@ class Broker:
         app.router.add_get("/api/messages", self.http_messages)
         app.router.add_get("/api/bots", self.http_bots)
         app.router.add_post("/api/task", self.http_post_task)
+        app.router.add_put("/api/task/{tid}", self.http_put_task)
+        app.router.add_delete("/api/task/{tid}", self.http_delete_task)
         app.router.add_post("/api/memory", self.http_post_memory)
         # approvals / votes / flows: REST counterparts of the WS actions
         app.router.add_post("/api/approval", self.http_post_approval)
@@ -2684,6 +2983,7 @@ class Broker:
         app.router.add_post("/api/flow", self.http_post_flow)
         app.router.add_delete("/api/flow/{fid}", self.http_delete_flow)
         app.router.add_post("/api/flow/{fid}/fire", self.http_post_flow_fire)
+        app.router.add_post("/api/flow/{fid}/toggle", self.http_post_flow_toggle)
         app.router.add_get("/api/plugins", self.http_plugins)
         app.router.add_get("/api/plugins/{plugin_id}", self.http_plugin_detail)
         # New endpoints: rooms and share-info
@@ -2909,10 +3209,13 @@ def print_banner(ip: str, ui_port: int, instance_port: int):
 
 async def amain():
     token = os.environ.get("MESH_TOKEN") or None
-    broker = Broker(auth_token=token)
+    workspaces_file = os.environ.get(DEFAULT_WORKSPACES_FILE_ENV) or None
+    broker = Broker(auth_token=token, workspaces=workspaces_file)
     await broker.start()
     if token:
         log.info("Shared-token auth ENABLED (MESH_TOKEN set)")
+    if broker.workspaces is not None:
+        log.info(f"Workspace allowlist ENABLED ({len(broker.workspaces)} slugs)")
     print_banner(local_ip(), broker.ui_port, broker.instance_port)
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()

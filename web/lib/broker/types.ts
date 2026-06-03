@@ -10,6 +10,8 @@ export type Instance = {
   role: string
   paused: boolean
   room: string
+  workspace_slug: string
+  workspace_id: string
 }
 
 export type Message = {
@@ -19,6 +21,7 @@ export type Message = {
   text: string
   ts: string
   room?: string
+  channel?: string
 }
 
 export type Task = {
@@ -41,6 +44,57 @@ export type MemoryEntry = {
   type: string
   by: string
   ts: string
+}
+
+export type Approval = {
+  id: string
+  from: string
+  action: string
+  risk: "low" | "med" | "high"
+  detail: string
+  status: "pending" | "approved" | "rejected"
+  ts: string
+  decided_at?: string
+  decision?: boolean
+}
+
+export type Vote = {
+  id: string
+  question: string
+  options: string[]
+  ballots: Record<string, string>
+  threshold: number | null
+  status: "open" | "resolved"
+  winner: string | null
+  created_by: string
+  ts: string
+  room?: string
+  resolved_at?: string
+}
+
+export type Flow = {
+  id: string
+  name: string
+  trigger: string
+  action: string
+  color?: string
+  enabled: boolean
+  ts: string
+}
+
+export type AuditEntry = {
+  id: string
+  ts: string
+  agent: string
+  action: string
+  detail: string
+}
+
+export type Channel = {
+  id: string
+  name: string
+  members: string[]
+  created_at: string
 }
 
 export type BrokerState = {

@@ -66,6 +66,7 @@ export default function MemoryPage({ params }: Props) {
             value={key}
             onChange={(e) => setKey(e.target.value)}
             placeholder="Key, e.g. api.endpoint"
+            aria-label="Entry key"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <input
@@ -73,11 +74,13 @@ export default function MemoryPage({ params }: Props) {
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && save()}
             placeholder="Value"
+            aria-label="Entry value"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <select
             value={memType}
             onChange={(e) => setMemType(e.target.value)}
+            aria-label="Entry type"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm focus:outline-none"
           >
             {TYPES.map((t) => (

@@ -13,11 +13,15 @@ type Counts = {
 async function loadCounts(workspaceSlug: string): Promise<Counts> {
   try {
     const broker = await resolveBroker(workspaceSlug)
+    // Scope instances to this workspace so a shared broker only surfaces the
+    // peers that registered under this slug (server-side filter, not a client
+    // reconciliation).
+    const ws = encodeURIComponent(workspaceSlug)
     const [msgsRes, tasksRes, memRes, instRes] = await Promise.all([
       brokerJson<{ messages: Message[] }>(broker, "/api/messages?limit=500"),
       brokerJson<{ tasks: Task[] }>(broker, "/api/tasks"),
       brokerJson<{ memory: MemoryEntry[] }>(broker, "/api/memory"),
-      brokerJson<Instance[]>(broker, "/api/instances"),
+      brokerJson<Instance[]>(broker, `/api/instances?workspace=${ws}`),
     ])
     const startOfDay = new Date()
     startOfDay.setHours(0, 0, 0, 0)

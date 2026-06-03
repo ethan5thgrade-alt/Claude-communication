@@ -132,10 +132,6 @@ export default function LandingPage() {
               body={`Event-driven rules that fire without you watching. "When T1 and T2 are done, start the review." That's the whole model.`}
             />
             <Feature
-              title="Spend tracking"
-              body="See what each agent costs per day. Set hard limits. One shared ledger across all instances so nothing slips through."
-            />
-            <Feature
               title="Works across machines"
               body="Your laptop, a friend's machine, a VPS. If connect.py can reach the broker, the instance is in the mesh."
             />

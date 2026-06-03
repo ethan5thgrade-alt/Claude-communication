@@ -51,9 +51,34 @@ async function main() {
     console.log(`[control] paused=${evt.paused}`);
   });
 
+  // When another instance opens a vote, cast a ballot so voteAndWait callers
+  // on the far side can resolve.
+  mesh.on("vote_open", (evt) => {
+    const v = evt.vote;
+    console.log(`[vote_open] ${v.id} ${v.question} -> casting ${v.options[0]}`);
+    mesh.voteCast(v.id, v.options[0]);
+  });
+
   // Greet the human watcher.
   mesh.send("TypeScript client online.");
   mesh.status("Idle, listening", 0);
+
+  // Demonstrate the blocking helpers. `approveAndWait` blocks until the human
+  // approves/rejects in the dashboard (or the timeout elapses).
+  if (process.env.DEMO_BLOCKING === "1") {
+    mesh.status("Awaiting approval", 50);
+    const ok = await mesh.approveAndWait(
+      "deploy connect.ts client update",
+      "medium",
+      "ship blocking helpers",
+      60_000,
+    );
+    console.log(`[approveAndWait] decision=${ok}`);
+
+    const winner = await mesh.voteAndWait("Promote build?", ["yes", "no"], 1, 60_000);
+    console.log(`[voteAndWait] winner=${winner}`);
+    mesh.status("Idle, listening", 0);
+  }
 
   // Hold the process open until SIGINT.
   const shutdown = () => {
