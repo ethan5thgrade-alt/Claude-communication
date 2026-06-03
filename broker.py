@@ -59,6 +59,13 @@ MAX_AUDIT_IN_STATE = 1000
 MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
 DEFAULT_PLUGINS_DIR = Path.home() / ".claude" / "plugins" / "cache"
 
+# Workspace allowlist. When MESH_WORKSPACES_FILE points at a JSON file the
+# broker is workspace-aware: every register frame must name a slug present in
+# the file, and that slug resolves to a stable workspace_id surfaced to the
+# dashboard. When unset the broker is workspace-agnostic (single-tenant dev),
+# mirroring the opt-in posture of MESH_TOKEN.
+DEFAULT_WORKSPACES_FILE_ENV = "MESH_WORKSPACES_FILE"
+
 # Per-instance offline backlog cap (bytes). Evicts oldest entries when exceeded.
 BACKLOG_BYTE_BUDGET = 256 * 1024  # 256 KB
 
@@ -140,6 +147,56 @@ def _generate_invite_code(length: int = 8) -> str:
     chars = string.ascii_uppercase + string.digits
     return "".join(random.choices(chars, k=length))
 
+
+def _load_workspaces(source: Optional[Any]) -> Optional[dict[str, dict]]:
+    """Load the workspace allowlist into a {slug: {id, name?}} mapping.
+
+    `source` may be a path (str/Path) to a JSON file, an already-parsed mapping
+    or list, or None. Two JSON shapes are accepted:
+
+        ["acme", "beta"]                                   # slugs only
+        {"acme": {"id": "ws_acme", "name": "Acme"}, ...}   # full records
+
+    For the list shape (or a record missing "id") the slug doubles as the id.
+    Returns None when no allowlist is configured (workspace-agnostic mode), or
+    an empty dict when the file exists but is empty/unparseable (deny-all).
+    """
+    if source is None:
+        return None
+    if isinstance(source, (dict, list)):
+        raw: Any = source
+    else:
+        p = Path(source)
+        if not p.exists():
+            log.warning(f"Workspaces file not found: {p}; treating as deny-all")
+            return {}
+        try:
+            with open(p, "r") as f:
+                raw = json.load(f)
+        except Exception as e:
+            log.warning(f"Failed to parse workspaces file {p}: {e}; deny-all")
+            return {}
+    out: dict[str, dict] = {}
+    if isinstance(raw, list):
+        for slug in raw:
+            slug = str(slug).strip()
+            if slug:
+                out[slug] = {"id": slug, "name": slug}
+    elif isinstance(raw, dict):
+        for slug, rec in raw.items():
+            slug = str(slug).strip()
+            if not slug:
+                continue
+            if isinstance(rec, dict):
+                wid = str(rec.get("id") or slug)
+                name = str(rec.get("name") or slug)
+            else:
+                wid, name = slug, str(rec or slug)
+            out[slug] = {"id": wid, "name": name}
+    else:
+        log.warning("Workspaces config is neither list nor object; deny-all")
+    return out
+
 DEFAULT_ROOM = "default"
 
 
@@ -189,7 +246,8 @@ class Broker:
                  state_path: Path = STATE_PATH,
                  backup_interval_seconds: float = DEFAULT_BACKUP_INTERVAL_SECONDS,
                  auth_token: Optional[str] = None,
-                 plugins_dir: Optional[Path] = None):
+                 plugins_dir: Optional[Path] = None,
+                 workspaces: Optional[Any] = None):
         self.ui_port = ui_port
         self.instance_port = instance_port
         self.state_path = state_path
@@ -197,6 +255,10 @@ class Broker:
         # Optional shared-token auth. None or empty string => auth disabled.
         self.auth_token: Optional[str] = auth_token or None
         self.plugins_dir = Path(plugins_dir) if plugins_dir is not None else DEFAULT_PLUGINS_DIR
+        # Workspace allowlist: None => workspace-agnostic; dict => slug-gated.
+        # `workspaces` accepts a path, a parsed mapping, or None (see
+        # _load_workspaces). Empty dict means "configured but no slugs" => deny.
+        self.workspaces: Optional[dict[str, dict]] = _load_workspaces(workspaces)
 
         self.lock = asyncio.Lock()
         self.state: dict = empty_state()
@@ -256,6 +318,24 @@ class Broker:
 
     def online_instance_count(self) -> int:
         return sum(1 for info in self.instances.values() if info.get("online"))
+
+    # ------------------- workspace allowlist -------------------
+    def _resolve_workspace(self, slug: Optional[str]) -> Optional[tuple[str, str]]:
+        """Validate a register frame's workspace_slug against the allowlist.
+
+        Returns (slug, workspace_id) when the slug is permitted, or None when
+        it is rejected. In workspace-agnostic mode (self.workspaces is None) any
+        slug is accepted; an empty slug resolves to the empty-string workspace
+        so single-tenant dev setups keep working unchanged. When an allowlist is
+        configured, the slug must be a non-empty key in it."""
+        slug = (slug or "").strip()
+        if self.workspaces is None:
+            # workspace-agnostic: echo the slug back, derive id from slug.
+            return (slug, slug)
+        rec = self.workspaces.get(slug)
+        if not rec:
+            return None
+        return (slug, str(rec.get("id") or slug))
 
     # ------------------- state persistence -------------------
     def _pre_migration_backup(self, source_version: int) -> None:
@@ -550,19 +630,32 @@ class Broker:
             await self.send_to_instance(iid, payload)
 
     # ------------------- instances meta -------------------
-    def instances_snapshot(self, room: Optional[str] = None) -> list[dict]:
+    def instances_snapshot(self, room: Optional[str] = None,
+                           workspace: Optional[str] = None) -> list[dict]:
         """Return a list of instance info dicts.
 
-        If `room` is provided, only return instances in that room.
+        If `room` is provided, only return instances in that room. If
+        `workspace` is provided, only return instances whose workspace_slug OR
+        workspace_id matches it (the dashboard passes a slug; accepting either
+        keeps callers that hold only the id working too).
         """
+        def _ws_match(slug: str, wid: str) -> bool:
+            if workspace is None:
+                return True
+            return workspace == slug or workspace == wid
+
         out = []
         seen = set()
         for iid, info in self.instances.items():
             inst_room = info.get("room", DEFAULT_ROOM)
             if room is not None and inst_room != room:
                 continue
-            seen.add(iid)
             meta = self.state["instances_meta"].get(iid, {})
+            ws_slug = info.get("workspace_slug", meta.get("workspace_slug", ""))
+            ws_id = info.get("workspace_id", meta.get("workspace_id", ""))
+            if not _ws_match(ws_slug, ws_id):
+                continue
+            seen.add(iid)
             out.append({
                 "id": iid,
                 "name": info.get("name", iid),
@@ -575,6 +668,8 @@ class Broker:
                 "role": meta.get("role", ""),
                 "paused": meta.get("paused", False),
                 "room": inst_room,
+                "workspace_slug": ws_slug,
+                "workspace_id": ws_id,
             })
         # include persisted-but-offline instances
         for iid, meta in self.state["instances_meta"].items():
@@ -582,6 +677,10 @@ class Broker:
                 continue
             inst_room = meta.get("room", DEFAULT_ROOM)
             if room is not None and inst_room != room:
+                continue
+            ws_slug = meta.get("workspace_slug", "")
+            ws_id = meta.get("workspace_id", "")
+            if not _ws_match(ws_slug, ws_id):
                 continue
             out.append({
                 "id": iid,
@@ -595,6 +694,8 @@ class Broker:
                 "role": meta.get("role", ""),
                 "paused": meta.get("paused", False),
                 "room": inst_room,
+                "workspace_slug": ws_slug,
+                "workspace_id": ws_id,
             })
         return out
 
@@ -1006,6 +1107,29 @@ class Broker:
                     role_in = (msg.get("role") or "").strip()
                     room = (msg.get("room") or DEFAULT_ROOM).strip() or DEFAULT_ROOM
 
+                    # Workspace allowlist. When configured (MESH_WORKSPACES_FILE),
+                    # an unknown/missing slug is rejected before the instance is
+                    # tracked — the dashboard later filters by the resolved id.
+                    resolved_ws = self._resolve_workspace(msg.get("workspace_slug"))
+                    if resolved_ws is None:
+                        bad_slug = (msg.get("workspace_slug") or "").strip()
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "register_failed",
+                                "reason": "unknown workspace",
+                                "workspace_slug": bad_slug,
+                            }))
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
+                        self.audit(instance_id, "register_rejected",
+                                   f"workspace_slug={bad_slug or '-'}")
+                        try:
+                            await ws.close()
+                        except Exception as e:
+                            log.debug("silently swallowed exception: %r", e)
+                        return
+                    workspace_slug, workspace_id = resolved_ws
+
                     async with self.lock:
                         existing = self.instances.get(instance_id)
                         if existing and existing.get("ws") is not ws:
@@ -1024,10 +1148,14 @@ class Broker:
                             "task": "",
                             "workload": 0,
                             "room": room,
+                            "workspace_slug": workspace_slug,
+                            "workspace_id": workspace_id,
                         }
                         # persist meta
                         meta = self.state["instances_meta"].setdefault(instance_id, {})
-                        meta.update({"name": name, "project": project, "room": room})
+                        meta.update({"name": name, "project": project, "room": room,
+                                     "workspace_slug": workspace_slug,
+                                     "workspace_id": workspace_id})
                         if email:
                             meta["email"] = email
                         if role_in:
@@ -1036,7 +1164,8 @@ class Broker:
                         meta.setdefault("email", "")
                         meta.setdefault("paused", False)
                         self.audit(instance_id, "register",
-                                   f"name={name} project={project} email={email or '-'} room={room}")
+                                   f"name={name} project={project} email={email or '-'} "
+                                   f"room={room} workspace={workspace_slug or '-'}")
                         self.schedule_write()
 
                     # send memory init (room-scoped)
@@ -2264,7 +2393,9 @@ class Broker:
 
     async def http_instances(self, request):
         room = request.query.get("room") or None
-        return self._json_response(self.instances_snapshot(room=room))
+        workspace = request.query.get("workspace") or None
+        return self._json_response(
+            self.instances_snapshot(room=room, workspace=workspace))
 
     async def http_tasks(self, request):
         room = request.query.get("room") or None
@@ -2518,10 +2649,12 @@ class Broker:
         except Exception:
             return self._json_response({"error": "invalid json"}, status=400)
         decision = bool(body.get("approved", body.get("decision")))
-        ap = next((a for a in self.state["approvals"] if a["id"] == ap_id), None)
-        if not ap:
-            return self._json_response({"error": "approval not found"}, status=404)
+        # Read, validate, and mutate atomically under the lock so concurrent
+        # respond calls cannot observe a stale snapshot and clobber each other.
         async with self.lock:
+            ap = next((a for a in self.state["approvals"] if a["id"] == ap_id), None)
+            if not ap:
+                return self._json_response({"error": "approval not found"}, status=404)
             ap["status"] = "approved" if decision else "rejected"
             ap["decided_at"] = now_iso()
             ap["decision"] = decision
@@ -2591,14 +2724,18 @@ class Broker:
             return self._json_response({"error": "invalid json"}, status=400)
         voter = (body.get("voter") or body.get("from") or "you").strip() or "you"
         option = body.get("option") or body.get("choice")
-        v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
-        if not v:
-            return self._json_response({"error": "vote not found"}, status=404)
-        if v.get("status") != "open":
-            return self._json_response({"error": "vote closed"}, status=400)
-        if option not in v.get("options", []):
-            return self._json_response({"error": "invalid option"}, status=400)
+        # Look up, validate status/option, and record the ballot atomically under
+        # the lock. A concurrent close (status->closed/resolved) cannot slip
+        # between the check and the mutation. _maybe_resolve_vote acquires the
+        # lock itself, so it is invoked after release.
         async with self.lock:
+            v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
+            if not v:
+                return self._json_response({"error": "vote not found"}, status=404)
+            if v.get("status") != "open":
+                return self._json_response({"error": "vote closed"}, status=400)
+            if option not in v.get("options", []):
+                return self._json_response({"error": "invalid option"}, status=400)
             v.setdefault("ballots", {})[voter] = option
             self.audit(voter, "vote_cast", f"{vote_id}={option} (REST)")
             self.schedule_write()
@@ -3072,10 +3209,13 @@ def print_banner(ip: str, ui_port: int, instance_port: int):
 
 async def amain():
     token = os.environ.get("MESH_TOKEN") or None
-    broker = Broker(auth_token=token)
+    workspaces_file = os.environ.get(DEFAULT_WORKSPACES_FILE_ENV) or None
+    broker = Broker(auth_token=token, workspaces=workspaces_file)
     await broker.start()
     if token:
         log.info("Shared-token auth ENABLED (MESH_TOKEN set)")
+    if broker.workspaces is not None:
+        log.info(f"Workspace allowlist ENABLED ({len(broker.workspaces)} slugs)")
     print_banner(local_ip(), broker.ui_port, broker.instance_port)
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -21,7 +21,16 @@ python3 broker.py
 
 # 3. connect an instance (from inside a Claude Code session)
 python3 connect.py
+
+# ...or register under a specific workspace with a distinct name:
+python3 connect.py --workspace my-ws --name "Claude 1"
 ```
+
+`--workspace` takes a URL-safe slug (the same form the web app routes on) and
+sets the instance project plus a workspace-scoped instance id. `--name` adds a
+human label and keeps multiple instances in one workspace distinct
+(`my-ws-claude-1`, `my-ws-claude-2`). Both also accept the `INSTANCE_ID`,
+`INSTANCE_PROJECT`, and `INSTANCE_NAME` env vars.
 
 Open `http://localhost:8765` (or `http://<lan-ip>:8765` from your phone)
 for the UI.

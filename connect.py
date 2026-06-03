@@ -5,9 +5,11 @@ asyncio event loop in a thread so sync callers can fire-and-forget.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -17,10 +19,117 @@ from typing import Any, Optional
 
 import websockets
 
+# ---------------- CLI / identity helpers ----------------
+# A workspace slug is the same URL-safe identifier the web app routes on
+# (see web/lib/utils.ts slugify): lowercase, hyphen-separated, no leading or
+# trailing hyphens, 1-40 chars. Keep these two in sync.
+_WORKSPACE_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_WORKSPACE_SLUG_MAXLEN = 40
+
+
+def slugify(value: str) -> str:
+    """Mirror web/lib/utils.ts slugify(): lowercase, hyphenated, URL-safe.
+
+    "My Team!" -> "my-team". Returns "" if nothing usable remains.
+    """
+    out = (value or "").lower().strip()
+    out = re.sub(r"['\"]", "", out)
+    out = re.sub(r"[^a-z0-9]+", "-", out)
+    out = re.sub(r"^-+|-+$", "", out)
+    return out[:_WORKSPACE_SLUG_MAXLEN]
+
+
+def validate_workspace_slug(slug: str) -> str:
+    """Return the slug unchanged if it is a valid workspace slug, else raise.
+
+    Validation matches the routable form used by the web app so a slug accepted
+    here is the same one that appears in /<workspaceSlug> URLs.
+    """
+    if not slug:
+        raise ValueError("workspace slug must not be empty")
+    if len(slug) > _WORKSPACE_SLUG_MAXLEN:
+        raise ValueError(
+            f"workspace slug too long (max {_WORKSPACE_SLUG_MAXLEN} chars): {slug!r}"
+        )
+    if not _WORKSPACE_SLUG_RE.match(slug):
+        raise ValueError(
+            "workspace slug must be lowercase alphanumeric words joined by "
+            f"single hyphens (got {slug!r}); try {slugify(slug)!r}"
+        )
+    return slug
+
+
+def resolve_instance_id(workspace: str, name: str = "") -> str:
+    """Derive a stable INSTANCE_ID from workspace context and optional name.
+
+    The id is workspace-scoped so instances register under the right workspace
+    rather than a hardcoded default. With a name, the id is
+    "<workspace>-<name-slug>" so multiple named instances in one workspace stay
+    distinct; without a name it is just the workspace slug.
+    """
+    ws = validate_workspace_slug(workspace)
+    name_slug = slugify(name)
+    return f"{ws}-{name_slug}" if name_slug else ws
+
+
+def _apply_cli_identity(argv: Optional[list] = None) -> argparse.Namespace:
+    """Parse --workspace/--name and export the derived identity into os.environ.
+
+    Must run before the INSTANCE_ID/NAME/PROJECT module constants are read so
+    the connection loop registers with the workspace-derived id. Env vars that
+    are already set still win for fields the caller did not pass on the CLI.
+    """
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    if args.workspace:
+        slug = validate_workspace_slug(args.workspace)
+        os.environ["INSTANCE_ID"] = resolve_instance_id(slug, args.name or "")
+        os.environ["INSTANCE_PROJECT"] = slug
+        # The broker gates registration on this slug when it runs a workspace
+        # allowlist; surface it so the register frame carries workspace_slug.
+        os.environ["INSTANCE_WORKSPACE"] = slug
+    if args.name:
+        os.environ["INSTANCE_NAME"] = args.name
+    return args
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="connect.py",
+        description="Connect a Claude Code instance to the Agent Mesh broker.",
+    )
+    parser.add_argument(
+        "--workspace",
+        metavar="SLUG",
+        help="Workspace slug to register under (lowercase, hyphenated). "
+             "Sets the instance project and seeds the instance id.",
+    )
+    parser.add_argument(
+        "--name",
+        metavar="NAME",
+        help="Human-readable instance name; combined with --workspace to form "
+             "a distinct instance id.",
+    )
+    return parser
+
+
+# Parse CLI identity flags before deriving the module constants below, but only
+# when run as a real script. During import (including pytest, which owns argv)
+# we must not consume sys.argv, so guard on __name__ and skip when pytest is
+# the entrypoint.
+if __name__ == "__main__" and "pytest" not in sys.argv[0]:
+    try:
+        _apply_cli_identity()
+    except ValueError as _e:
+        print(f"[ARG ERROR] {_e}", file=sys.stderr)
+        raise SystemExit(2)
+
 # ---------------- defaults ----------------
 # Each Claude Code session should set INSTANCE_ID (and ideally NAME) before
 # starting connect.py so they register as distinct peers. Env vars win over
 # the hardcoded defaults; the constants here are only used when nothing is set.
+# The CLI flags above export INSTANCE_ID/INSTANCE_PROJECT/INSTANCE_NAME so the
+# workspace-derived identity flows through here.
 INSTANCE_ID = os.environ.get("INSTANCE_ID") or "cc1"
 NAME = os.environ.get("INSTANCE_NAME") or os.environ.get("NAME") or "Claude 1"
 PROJECT = os.environ.get("INSTANCE_PROJECT") or os.environ.get("PROJECT") or "default"
@@ -28,6 +137,12 @@ PROJECT = os.environ.get("INSTANCE_PROJECT") or os.environ.get("PROJECT") or "de
 # multiple Anthropic accounts on one machine can tell instances apart.
 EMAIL = os.environ.get("INSTANCE_EMAIL") or os.environ.get("EMAIL") or ""
 ROLE = os.environ.get("INSTANCE_ROLE") or os.environ.get("ROLE") or ""
+# Workspace this instance registers under. Set by --workspace (via
+# INSTANCE_WORKSPACE) or directly through the env var; "" in single-tenant dev
+# where the broker has no allowlist. Sent in the register frame as
+# workspace_slug so a workspace-gated broker can validate it.
+WORKSPACE_SLUG = (os.environ.get("INSTANCE_WORKSPACE")
+                  or os.environ.get("WORKSPACE_SLUG") or "")
 # BROKER_URL: prefer env var. Falls through to localhost; if localhost fails on
 # the first attempt and the env var was NOT set, we'll mDNS-browse for a LAN
 # broker (see _discover_broker_url).
@@ -38,6 +153,30 @@ INSTANCE_PORT = 8766
 # Optional shared-token auth. None or "" => no auth header sent.
 MESH_TOKEN = os.environ.get("MESH_TOKEN") or None
 # ------------------------------------------
+
+
+def workspace_guidance(project: str, workspace_slug: str) -> Optional[str]:
+    """Return a one-line warning when this instance won't be workspace-detected.
+
+    The onboarding connect page (web/app/(app)/onboarding/connect/page.tsx)
+    flips its "connected" indicator only for instances whose `project` equals
+    the workspace slug it polls for. An instance started without --workspace
+    keeps the hardcoded project='default' and so never matches a real slug like
+    'acme-team' — it registers fine but stays invisible to that page. Surface
+    that here instead of failing silently. Returns None when a non-default
+    project is set (CLI flag or env var), in which case detection works.
+    """
+    if workspace_slug:
+        return None
+    if project and project != "default":
+        return None
+    return (
+        "[WORKSPACE] no --workspace given; registering with project='default'. "
+        "The onboarding page detects instances by project==<workspace-slug>, so "
+        "this session will not appear there. Re-run with "
+        "`--workspace <slug>` (or set INSTANCE_PROJECT/INSTANCE_WORKSPACE) to be "
+        "detected."
+    )
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _loop_thread: Optional[threading.Thread] = None
@@ -366,6 +505,7 @@ async def _client_loop():
     global BROKER_URL
     delay = 1.0
     first_attempt = True
+    warned_workspace = False
     while True:
         try:
             async with websockets.connect(BROKER_URL, ping_interval=20, ping_timeout=20) as ws:
@@ -382,10 +522,17 @@ async def _client_loop():
                     reg_payload["email"] = EMAIL
                 if ROLE:
                     reg_payload["role"] = ROLE
+                if WORKSPACE_SLUG:
+                    reg_payload["workspace_slug"] = WORKSPACE_SLUG
                 if MESH_TOKEN:
                     reg_payload["token"] = MESH_TOKEN
                 await ws.send(json.dumps(reg_payload))
                 print(f"[CONNECTED] {INSTANCE_ID} -> {BROKER_URL}")
+                if not warned_workspace:
+                    warning = workspace_guidance(PROJECT, WORKSPACE_SLUG)
+                    if warning:
+                        print(warning)
+                    warned_workspace = True
                 first_attempt = False
                 delay = 1.0
                 async for raw in ws:
@@ -396,6 +543,11 @@ async def _client_loop():
                     ptype = payload.get("type")
                     if ptype == "auth_failed":
                         print(f"[AUTH FAILED] {payload.get('reason', '')} — check MESH_TOKEN")
+                        return
+                    if ptype == "register_failed":
+                        print(f"[REGISTER FAILED] {payload.get('reason', '')} "
+                              f"(workspace_slug={payload.get('workspace_slug', '')!r}) "
+                              "— check --workspace / INSTANCE_WORKSPACE")
                         return
                     if ptype == "approval_pending":
                         _handle_approval_pending(payload)
