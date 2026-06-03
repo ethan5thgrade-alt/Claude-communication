@@ -955,6 +955,32 @@ async def test_auth_ui_ws_rejects_wrong_token(authed_broker):
 
 
 @pytest.mark.asyncio
+async def test_auth_default_deny_on_rest_endpoints(authed_broker):
+    """Default-deny middleware regression guard: endpoints that previously
+    skipped _check_rest_auth (reads, the token-returning share-info, and the
+    mutating task/memory POSTs) must all 401 without the token, while the
+    public allowlist (health) stays open."""
+    reads = ("/api/instances", "/api/tasks", "/api/memory",
+             "/api/messages", "/api/audit", "/api/share-info")
+    async with aiohttp.ClientSession() as session:
+        for path in reads:
+            async with session.get(REST_URL + path) as r:
+                assert r.status == 401, f"{path} must require a token"
+            async with session.get(REST_URL + path,
+                                   headers={"X-Mesh-Token": "secret"}) as r:
+                assert r.status == 200, f"{path} must pass with the token"
+        # Mutating POSTs that used to be unauthenticated
+        async with session.post(REST_URL + "/api/task", json={"title": "x"}) as r:
+            assert r.status == 401
+        async with session.post(REST_URL + "/api/memory",
+                                json={"key": "k", "value": "v"}) as r:
+            assert r.status == 401
+        # Public allowlist: health needs no token
+        async with session.get(REST_URL + "/api/health") as r:
+            assert r.status == 200
+
+
+@pytest.mark.asyncio
 async def test_http_health_returns_ok(started_broker):
     async with aiohttp.ClientSession() as session:
         async with session.get(REST_URL + "/api/health") as r:

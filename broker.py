@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -474,7 +475,27 @@ class Broker:
         self.state["counters"][prefix] = self.state["counters"].get(prefix, 0) + 1
         return f"{prefix}{self.state['counters'][prefix]:03d}"
 
+    def _next_msg_id(self) -> str:
+        # Monotonic message id from a dedicated counter, NOT len(messages).
+        # _prune_state_inplace truncates the list, so len() resets downward and
+        # the old f"msg-{len()+1}" scheme reissued ids that pruned-but-still-
+        # referenced messages (and the cloud broker_msg_id dedup) had used.
+        # Floored once at len() so it can never collide with legacy ids written
+        # before this counter existed. Callers must hold self.lock (mutates
+        # counters, same contract as next_id()).
+        n = max(self.state["counters"].get("msg", 0), len(self.state["messages"])) + 1
+        self.state["counters"]["msg"] = n
+        return f"msg-{n}"
+
     def audit(self, agent: str, action: str, detail: str = ""):
+        # next_id() and the append below contain no await points, so under
+        # asyncio's single-threaded cooperative model this read-modify-write
+        # of the audit counter and list runs atomically with respect to other
+        # coroutines. Callers that mutate other state alongside an audit must
+        # still hold self.lock so the whole mutation is atomic; audit() itself
+        # must not acquire self.lock because it is invoked from many contexts
+        # that already hold it (and from synchronous, non-async contexts such
+        # as the backup/migration paths), and self.lock is non-reentrant.
         entry = {
             "id": self.next_id("A"),
             "ts": now_iso(),
@@ -603,9 +624,13 @@ class Broker:
                 winner = qualifying[0]
 
         # all-voted path
+        vote_room = vote.get("room", DEFAULT_ROOM)
         if winner is None:
-            # required voter set = all currently-online instances + "you"
-            online_ids = {iid for iid, info in self.instances.items() if info.get("online")}
+            # required voter set = currently-online instances in the vote's room + "you"
+            online_ids = {
+                iid for iid, info in self.instances.items()
+                if info.get("online") and info.get("room", DEFAULT_ROOM) == vote_room
+            }
             required = online_ids | {"you"}
             voted = set(ballots.keys())
             if required and required.issubset(voted):
@@ -633,7 +658,7 @@ class Broker:
             "winner": winner,
             "vote": vote,
         }
-        await self.broadcast_instances(payload)
+        await self.broadcast_instances(payload, room=vote_room)
         await self.broadcast_ui(payload)
 
     # ------------------- plugin catalog -------------------
@@ -909,29 +934,33 @@ class Broker:
             rendered = self._render_template(template, entry, m)
             if kind == "send":
                 to = params["to"]
-                payload = {
-                    "type": "message",
-                    "id": f"flow-{fid}-{len(self.state['messages']) + 1}",
+                message = {
                     "from": "flow",
                     "to": to,
                     "text": rendered,
                     "ts": now_iso(),
                     "flow": fid,
                 }
-                await self.send_to_instance(to, payload)
+                async with self.lock:
+                    message["id"] = self._next_msg_id()
+                    self.state["messages"].append(message)
+                    self.schedule_write()
+                await self.send_to_instance(to, {"type": "message", **message})
                 await self.broadcast_ui({"type": "flow_fired", "id": fid,
                                           "to": to, "text": rendered})
             elif kind == "broadcast":
-                payload = {
-                    "type": "message",
-                    "id": f"flow-{fid}-{len(self.state['messages']) + 1}",
+                message = {
                     "from": "flow",
                     "to": "all",
                     "text": rendered,
                     "ts": now_iso(),
                     "flow": fid,
                 }
-                await self.broadcast_instances(payload)
+                async with self.lock:
+                    message["id"] = self._next_msg_id()
+                    self.state["messages"].append(message)
+                    self.schedule_write()
+                await self.broadcast_instances({"type": "message", **message})
                 await self.broadcast_ui({"type": "flow_fired", "id": fid,
                                           "to": "all", "text": rendered})
             elif kind == "webhook":
@@ -954,8 +983,8 @@ class Broker:
                 mtype = msg.get("type")
 
                 if mtype == "register":
-                    # Shared-token auth (optional)
-                    if self.auth_token and msg.get("token") != self.auth_token:
+                    # Shared-token auth (optional), constant-time
+                    if not self._token_ok(msg.get("token")):
                         try:
                             await ws.send(json.dumps({
                                 "type": "auth_failed",
@@ -1063,7 +1092,6 @@ class Broker:
                     if not text:
                         continue
                     entry = {
-                        "id": f"msg-{len(self.state['messages']) + 1}",
                         "from": instance_id,
                         "to": to,
                         "text": text,
@@ -1071,6 +1099,7 @@ class Broker:
                         "room": sender_room,
                     }
                     async with self.lock:
+                        entry["id"] = self._next_msg_id()
                         self.state["messages"].append(entry)
                         self.audit(instance_id, "message", f"to={to} room={sender_room}")
                         self.schedule_write()
@@ -1164,7 +1193,6 @@ class Broker:
                     if not text:
                         continue
                     entry = {
-                        "id": f"msg-{len(self.state['messages']) + 1}",
                         "from": instance_id,
                         "to": "all",
                         "text": text,
@@ -1172,6 +1200,7 @@ class Broker:
                         "room": sender_room,
                     }
                     async with self.lock:
+                        entry["id"] = self._next_msg_id()
                         self.state["messages"].append(entry)
                         self.audit(instance_id, "broadcast", text[:80])
                         self.schedule_write()
@@ -1267,13 +1296,14 @@ class Broker:
                     if not instance_id:
                         continue
                     tid = msg.get("id")
-                    t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
-                    if not t:
-                        continue
-                    t["assignee"] = instance_id
-                    t["status"] = "In Progress"
-                    self.audit(instance_id, "task_claim", tid)
-                    self.schedule_write()
+                    async with self.lock:
+                        t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
+                        if not t:
+                            continue
+                        t["assignee"] = instance_id
+                        t["status"] = "In Progress"
+                        self.audit(instance_id, "task_claim", tid)
+                        self.schedule_write()
                     await self.state_update({"tasks": self.state["tasks"]})
 
                 elif mtype == "task_status":
@@ -1281,12 +1311,13 @@ class Broker:
                         continue
                     tid = msg.get("id")
                     status = msg.get("status", "")
-                    t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
-                    if not t or not status:
-                        continue
-                    t["status"] = status
-                    self.audit(instance_id, "task_status", f"{tid}->{status}")
-                    self.schedule_write()
+                    async with self.lock:
+                        t = next((x for x in self.state["tasks"] if x["id"] == tid), None)
+                        if not t or not status:
+                            continue
+                        t["status"] = status
+                        self.audit(instance_id, "task_status", f"{tid}->{status}")
+                        self.schedule_write()
                     await self.state_update({"tasks": self.state["tasks"]})
 
                 elif mtype == "vote_create":
@@ -1310,6 +1341,7 @@ class Broker:
                             threshold = int(threshold)
                         except Exception:
                             threshold = None
+                    sender_room = self.instances.get(instance_id, {}).get("room", DEFAULT_ROOM)
                     async with self.lock:
                         vid = self.next_id("V")
                         vote = {
@@ -1322,6 +1354,7 @@ class Broker:
                             "winner": None,
                             "created_by": instance_id,
                             "ts": now_iso(),
+                            "room": sender_room,
                         }
                         self.state["votes"].append(vote)
                         self.audit(instance_id, "vote_create", f"{vid} q={question[:40]}")
@@ -1337,26 +1370,26 @@ class Broker:
                     except Exception as e:
                         log.debug("silently swallowed exception: %r", e)
                     await self.state_update({"votes": self.state["votes"]})
-                    # notify other instances so they can cast
+                    # notify other instances in the same room so they can cast
                     await self.broadcast_instances({
                         "type": "vote_open",
                         "vote": vote,
-                    }, exclude=instance_id)
+                    }, exclude=instance_id, room=sender_room)
 
                 elif mtype == "vote_cast":
                     if not instance_id:
                         continue
                     vote_id = msg.get("vote_id")
                     option = msg.get("option")
-                    v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
-                    if not v:
-                        # unknown id — silent no-op (don't crash anyone)
-                        continue
-                    if v.get("status") != "open":
-                        continue
-                    if option not in v.get("options", []):
-                        continue
                     async with self.lock:
+                        v = next((x for x in self.state["votes"] if x["id"] == vote_id), None)
+                        if not v:
+                            # unknown id — silent no-op (don't crash anyone)
+                            continue
+                        if v.get("status") != "open":
+                            continue
+                        if option not in v.get("options", []):
+                            continue
                         v.setdefault("ballots", {})[instance_id] = option
                         self.audit(instance_id, "vote_cast", f"{vote_id}={option}")
                         self.schedule_write()
@@ -1449,8 +1482,8 @@ class Broker:
 
     # ------------------- UI WebSocket handler -------------------
     async def handle_ui_ws(self, request):
-        # Shared-token auth (optional) — must check before WS upgrade
-        if self.auth_token and request.query.get("token") != self.auth_token:
+        # Shared-token auth (optional) — must check before WS upgrade, constant-time
+        if not self._token_ok(request.query.get("token")):
             return web.Response(status=401, text="unauthorized")
         ws = web.WebSocketResponse()
         await ws.prepare(request)
@@ -1506,7 +1539,7 @@ class Broker:
                 async with self.lock:
                     for member in ch["members"]:
                         e = {
-                            "id": f"msg-{len(self.state['messages']) + 1}",
+                            "id": self._next_msg_id(),
                             "from": "you",
                             "to": member,
                             "text": text,
@@ -1525,7 +1558,6 @@ class Broker:
                     await self._evaluate_flows(e)
                 return
             entry = {
-                "id": f"msg-{len(self.state['messages']) + 1}",
                 "from": "you",
                 "to": to,
                 "text": text,
@@ -1534,6 +1566,7 @@ class Broker:
             if channel_in:
                 entry["channel"] = str(channel_in)
             async with self.lock:
+                entry["id"] = self._next_msg_id()
                 self.state["messages"].append(entry)
                 self.audit("you", "message", f"to={to}")
                 self.schedule_write()
@@ -1601,6 +1634,7 @@ class Broker:
                     threshold = int(threshold)
                 except Exception:
                     threshold = None
+            room = (data.get("room") or "").strip() or DEFAULT_ROOM
             async with self.lock:
                 vid = self.next_id("V")
                 vote = {
@@ -1613,11 +1647,12 @@ class Broker:
                     "winner": None,
                     "created_by": "you",
                     "ts": now_iso(),
+                    "room": room,
                 }
                 self.state["votes"].append(vote)
                 self.audit("you", "vote_create", f"{vid} q={question[:40]}")
                 self.schedule_write()
-            await self.broadcast_instances({"type": "vote_open", "vote": vote})
+            await self.broadcast_instances({"type": "vote_open", "vote": vote}, room=room)
             await self.state_update({"votes": self.state["votes"]})
 
         elif action == "create_task":
@@ -1714,12 +1749,20 @@ class Broker:
             await self.state_update({"memory": self.state["memory"]})
 
         elif action == "create_flow":
+            trigger = data.get("trigger", "")
+            if trigger:
+                try:
+                    re.compile(trigger)
+                except re.error as e:
+                    await ws.send_json({"type": "error",
+                                         "error": f"invalid regex in trigger: {e}"})
+                    return
             async with self.lock:
                 fid = self.next_id("F")
                 flow = {
                     "id": fid,
                     "name": data.get("name", ""),
-                    "trigger": data.get("trigger", ""),
+                    "trigger": trigger,
                     "action": data.get("action_desc", ""),
                     "color": data.get("color", "#888"),
                     "enabled": True,
@@ -1797,9 +1840,44 @@ class Broker:
             await ws.send_json({"type": "error", "error": f"unknown action {action}"})
 
     # ------------------- HTTP REST handlers -------------------
+    def _token_ok(self, provided) -> bool:
+        """Constant-time token comparison. True when no token is configured
+        (auth is opt-in). Using hmac.compare_digest avoids the timing oracle of
+        `!=` over a network tunnel."""
+        if not self.auth_token:
+            return True
+        return hmac.compare_digest(str(provided or ""), self.auth_token)
+
+    def _is_public_rest_path(self, method: str, path: str) -> bool:
+        # Default-deny: every /api route needs the token EXCEPT these. The
+        # dashboard and clients inject X-Mesh-Token on every fetch, so the only
+        # paths that must work pre-auth are the UI shell, health, and the
+        # friend-invite bootstrap (resolve an invite code — returns no token —
+        # and join a team with that code).
+        if path in ("/", "/ui", "/api/health"):
+            return True
+        if method == "GET" and path.startswith("/api/invite/"):
+            return True
+        if method == "POST" and re.match(r"^/api/teams/[^/]+/join$", path):
+            return True
+        return False
+
+    @web.middleware
+    async def _auth_middleware(self, request, handler):
+        """Enforce the shared token on every REST route by default. This is the
+        perimeter; per-handler _check_rest_auth calls are a redundant inner
+        check. CORS preflight (OPTIONS) is always allowed."""
+        if request.method != "OPTIONS" and not self._is_public_rest_path(
+            request.method, request.path
+        ):
+            provided = request.headers.get("X-Mesh-Token") or request.query.get("token")
+            if not self._token_ok(provided):
+                return web.json_response({"error": "unauthorized"}, status=401)
+        return await handler(request)
+
     def _check_rest_auth(self, request) -> Optional[web.Response]:
         """Return a 401 Response if auth fails, else None."""
-        if self.auth_token and request.headers.get("X-Mesh-Token") != self.auth_token:
+        if not self._token_ok(request.headers.get("X-Mesh-Token")):
             return web.json_response({"error": "unauthorized"}, status=401)
         return None
 
@@ -1945,7 +2023,7 @@ class Broker:
             async with self.lock:
                 for member in ch["members"]:
                     e = {
-                        "id": f"msg-{len(self.state['messages']) + 1}",
+                        "id": self._next_msg_id(),
                         "from": sender,
                         "to": member,
                         "text": text,
@@ -1967,7 +2045,6 @@ class Broker:
                                          "channel": cid})
 
         entry = {
-            "id": f"msg-{len(self.state['messages']) + 1}",
             "from": sender,
             "to": to,
             "text": text,
@@ -1978,6 +2055,7 @@ class Broker:
         if channel_in:
             entry["channel"] = str(channel_in)
         async with self.lock:
+            entry["id"] = self._next_msg_id()
             self.state["messages"].append(entry)
             self.audit(sender, "message",
                        f"to={to}{' channel=' + str(channel_in) if channel_in else ''} (REST)")
@@ -2437,17 +2515,19 @@ class Broker:
             except Exception:
                 threshold = None
         created_by = (body.get("from") or "you").strip() or "you"
+        room = (body.get("room") or "").strip() or DEFAULT_ROOM
         async with self.lock:
             vid = self.next_id("V")
             vote = {
                 "id": vid, "question": question, "options": list(options),
                 "ballots": {}, "threshold": threshold, "status": "open",
                 "winner": None, "created_by": created_by, "ts": now_iso(),
+                "room": room,
             }
             self.state["votes"].append(vote)
             self.audit(created_by, "vote_create", f"{vid} q={question[:40]} (REST)")
             self.schedule_write()
-        await self.broadcast_instances({"type": "vote_open", "vote": vote})
+        await self.broadcast_instances({"type": "vote_open", "vote": vote}, room=room)
         await self.broadcast_ui({"type": "votes", "votes": self.state["votes"]})
         return self._json_response({"ok": True, "vote": vote})
 
@@ -2488,11 +2568,18 @@ class Broker:
         name = (body.get("name") or "").strip()
         if not name:
             return self._json_response({"error": "empty name"}, status=400)
+        trigger = body.get("trigger", "")
+        if trigger:
+            try:
+                re.compile(trigger)
+            except re.error as e:
+                return self._json_response(
+                    {"error": f"invalid regex in trigger: {e}"}, status=400)
         async with self.lock:
             fid = self.next_id("F")
             flow = {
                 "id": fid, "name": name,
-                "trigger": body.get("trigger", ""),
+                "trigger": trigger,
                 "action": body.get("action") or body.get("action_desc", ""),
                 "color": body.get("color", "#888"),
                 "enabled": bool(body.get("enabled", True)),
@@ -2655,8 +2742,10 @@ class Broker:
             self.handle_instance, "0.0.0.0", self.instance_port
         )
 
-        # aiohttp UI/REST server
-        app = web.Application()
+        # aiohttp UI/REST server. The auth middleware is the default-deny
+        # perimeter for every /api route (see _is_public_rest_path for the
+        # bootstrap exceptions).
+        app = web.Application(middlewares=[self._auth_middleware])
         app.router.add_get("/", self.http_index)
         app.router.add_get("/ui", self.handle_ui_ws)
         app.router.add_get("/api/status", self.http_status)
