@@ -137,6 +137,32 @@ async def _recv_until(ws, match_fn, timeout=3.0):
             return payload
 
 
+async def _wait_for(predicate, timeout=3.0, interval=0.02):
+    """Poll a sync predicate on the loop until it returns truthy or timeout.
+
+    The blocking-and-wait helpers (broker_approve_and_wait / broker_vote_and_wait)
+    run in a worker thread, so the test side has to poll broker state to learn
+    when the server has registered the request. Returns the truthy value or
+    raises asyncio.TimeoutError.
+    """
+    end = asyncio.get_event_loop().time() + timeout
+    while True:
+        val = predicate()
+        if val:
+            return val
+        if asyncio.get_event_loop().time() >= end:
+            raise asyncio.TimeoutError()
+        await asyncio.sleep(interval)
+
+
+async def _rest_post(path, body):
+    """POST JSON to the broker REST API and return (status, parsed_json)."""
+    async with aiohttp.ClientSession() as session:
+        async with session.post(REST_URL + path, json=body) as resp:
+            data = await resp.json()
+            return resp.status, data
+
+
 # ------------------------------- tests -----------------------------------
 async def test_helper_send_round_trip(connect_mod):
     """`broker_send("hi", to="you")` should appear on the UI ws."""
@@ -203,6 +229,136 @@ async def test_helper_broadcast(connect_mod):
             lambda p: p.get("type") == "message" and p.get("text") == "all hands via helper",
         )
         assert got["from"] == "cc_helper"
+
+
+async def test_helper_approve_and_wait_approved(connect_mod, shared_broker):
+    """broker_approve_and_wait blocks, then returns True once the UI approves
+    via the REST /api/approval/{id}/respond endpoint."""
+    before = {a["id"] for a in shared_broker.state["approvals"]}
+
+    # Run the blocking helper in a worker thread so the event loop stays free
+    # to process the broker's approval_pending reply and serve the REST call.
+    fut = asyncio.ensure_future(
+        asyncio.to_thread(
+            connect_mod.broker_approve_and_wait,
+            "deploy hotfix", risk="medium", detail="prod patch", timeout=10.0,
+        )
+    )
+
+    # Wait for the broker to register the new approval (WS round-trip), then
+    # grab its server-assigned id.
+    new_ap = await _wait_for(
+        lambda: next(
+            (a for a in shared_broker.state["approvals"] if a["id"] not in before),
+            None,
+        ),
+        timeout=5.0,
+    )
+    ap_id = new_ap["id"]
+    assert ap_id.startswith("AP")
+    assert new_ap["from"] == "cc_helper"
+
+    status, data = await _rest_post(f"/api/approval/{ap_id}/respond", {"approved": True})
+    assert status == 200
+    assert data["approval"]["status"] == "approved"
+
+    result = await asyncio.wait_for(fut, timeout=5.0)
+    assert result is True
+
+    # audit captured the request originating from the helper instance
+    reqs = [a for a in shared_broker.state["audit"]
+            if a["action"] == "approval_request" and a["agent"] == "cc_helper"]
+    assert reqs, "approval_request audit entry from cc_helper missing"
+
+
+async def test_helper_approve_and_wait_rejected(connect_mod, shared_broker):
+    """broker_approve_and_wait returns False when the decision is a rejection."""
+    before = {a["id"] for a in shared_broker.state["approvals"]}
+
+    fut = asyncio.ensure_future(
+        asyncio.to_thread(
+            connect_mod.broker_approve_and_wait,
+            "drop prod table", risk="high", timeout=10.0,
+        )
+    )
+
+    new_ap = await _wait_for(
+        lambda: next(
+            (a for a in shared_broker.state["approvals"] if a["id"] not in before),
+            None,
+        ),
+        timeout=5.0,
+    )
+    ap_id = new_ap["id"]
+
+    status, data = await _rest_post(f"/api/approval/{ap_id}/respond", {"approved": False})
+    assert status == 200
+    assert data["approval"]["status"] == "rejected"
+
+    result = await asyncio.wait_for(fut, timeout=5.0)
+    assert result is False
+
+
+async def test_helper_approve_and_wait_timeout(connect_mod):
+    """With no responder, broker_approve_and_wait returns None on timeout and
+    cleans up its pending-waiter slots (no orphaned correlation state)."""
+    fut = asyncio.ensure_future(
+        asyncio.to_thread(
+            connect_mod.broker_approve_and_wait,
+            "no-op never-answered", risk="low", timeout=0.6,
+        )
+    )
+    result = await asyncio.wait_for(fut, timeout=5.0)
+    assert result is None
+    # Timeout path must drop its slot from both correlation registries so the
+    # next request doesn't get bound to a dead waiter. No waiter should be
+    # queued, and no bound waiter should be left with its event un-set.
+    assert connect_mod._pending_approval_waiters == []
+    dangling = [
+        slot for slot in connect_mod._pending_approvals.values()
+        if not slot["event"].is_set()
+    ]
+    assert dangling == [], f"orphaned approval waiters remain: {dangling}"
+
+
+async def test_helper_vote_and_wait_returns_winner(connect_mod, shared_broker):
+    """broker_vote_and_wait blocks until the vote resolves and returns the
+    winning option. A peer casts the deciding ballot (threshold=1)."""
+    before = {v["id"] for v in shared_broker.state["votes"]}
+
+    async with websockets.connect(WS_URL) as peer_ws:
+        await _register_protocol(peer_ws, iid="cc_voter")
+        await asyncio.sleep(0.05)
+
+        # Creator (cc_helper) blocks on the result in a worker thread.
+        fut = asyncio.ensure_future(
+            asyncio.to_thread(
+                connect_mod.broker_vote_and_wait,
+                "ship now?", ["ship", "hold"], 1, 10.0,
+            )
+        )
+
+        # Broker registers the vote and emits vote_open to the peer.
+        opened = await _recv_until(peer_ws, lambda p: p.get("type") == "vote_open")
+        vid = opened["vote"]["id"]
+        assert vid not in before
+        assert opened["vote"]["created_by"] == "cc_helper"
+
+        # Peer casts the deciding ballot; threshold=1 resolves immediately.
+        await peer_ws.send(json.dumps({
+            "type": "vote_cast", "vote_id": vid, "option": "ship",
+        }))
+
+        result = await asyncio.wait_for(fut, timeout=5.0)
+        assert result == "ship"
+
+        v = next(x for x in shared_broker.state["votes"] if x["id"] == vid)
+        assert v["status"] == "resolved"
+        assert v["winner"] == "ship"
+        # vote_create audit recorded against the helper instance
+        vc = [a for a in shared_broker.state["audit"]
+              if a["action"] == "vote_create" and a["agent"] == "cc_helper"]
+        assert vc, "vote_create audit entry from cc_helper missing"
 
 
 # ----------- benchmark (opt-in: only runs if pytest-benchmark is installed) ----
