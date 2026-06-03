@@ -19,6 +19,14 @@ from typing import Any, Optional
 
 import websockets
 
+# When stdout is not a TTY (piped, nohup, subprocess) Python block-buffers it,
+# so status/error lines only surface at exit. Line-buffer it so operators see
+# [CONNECTED] / [REGISTER FAILED] / etc. in real time.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 # ---------------- CLI / identity helpers ----------------
 # A workspace slug is the same URL-safe identifier the web app routes on
 # (see web/lib/utils.ts slugify): lowercase, hyphen-separated, no leading or
@@ -183,6 +191,10 @@ _loop_thread: Optional[threading.Thread] = None
 _ws_holder = {"ws": None, "connected": False}
 _loop_started = threading.Event()
 _stop_event: Optional[asyncio.Event] = None
+# Set when the WS loop hits a fatal, non-retryable rejection (bad token, or a
+# workspace slug the broker's allowlist refuses). The main thread watches this
+# to exit non-zero instead of hanging on a silent failure.
+_fatal = threading.Event()
 
 # approval correlation: ap_id -> {"event": threading.Event, "decision": bool|None}
 _pending_approvals: dict = {}
@@ -543,11 +555,13 @@ async def _client_loop():
                     ptype = payload.get("type")
                     if ptype == "auth_failed":
                         print(f"[AUTH FAILED] {payload.get('reason', '')} — check MESH_TOKEN")
+                        _fatal.set()
                         return
                     if ptype == "register_failed":
                         print(f"[REGISTER FAILED] {payload.get('reason', '')} "
                               f"(workspace_slug={payload.get('workspace_slug', '')!r}) "
                               "— check --workspace / INSTANCE_WORKSPACE")
+                        _fatal.set()
                         return
                     if ptype == "approval_pending":
                         _handle_approval_pending(payload)
@@ -872,9 +886,12 @@ if __name__ == "__main__":
     if sys.stdin.isatty():
         _interactive()
     else:
-        # Keep the main thread alive so the daemon loop stays connected.
+        # Keep the main thread alive so the daemon WS loop stays connected. If
+        # that loop hits a fatal auth/register rejection, exit non-zero instead
+        # of hanging silently (a mistyped --workspace must fail loudly). The WS
+        # loop thread is a daemon, so sys.exit cleanly tears it down.
         try:
-            while True:
-                time.sleep(60)
+            _fatal.wait()
+            sys.exit(1)
         except KeyboardInterrupt:
             pass

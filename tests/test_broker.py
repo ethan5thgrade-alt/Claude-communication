@@ -2654,6 +2654,38 @@ async def test_connect_cli_registers_workspace_derived_id(started_broker, tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_connect_cli_exits_on_workspace_rejection(workspaces_broker):
+    """A connect.py launched for a slug NOT in the broker's allowlist must exit
+    non-zero (not hang) and report the rejection, so a mistyped onboarding
+    command fails loudly instead of sitting silently connected-but-rejected."""
+    repo_root = str(ROOT)
+    env = dict(os.environ)
+    env["BROKER_URL"] = WS_URL
+    for k in ("INSTANCE_ID", "INSTANCE_NAME", "NAME", "INSTANCE_PROJECT", "PROJECT"):
+        env.pop(k, None)
+
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "connect.py", "--workspace", "not-allowed", "--name", "Rogue",
+        cwd=repo_root,
+        stdin=asyncio.subprocess.DEVNULL,  # non-TTY: the fatal-exit path under test
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        env=env,
+    )
+    try:
+        out_b, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise AssertionError("connect.py hung on workspace rejection instead of exiting")
+    out = out_b.decode()
+    assert proc.returncode == 1, f"expected exit 1, got {proc.returncode}; output:\n{out}"
+    assert "REGISTER FAILED" in out, f"expected a rejection message; output:\n{out}"
+    # The rejected slug must never have been tracked as an instance.
+    assert all("not-allowed" not in iid for iid in workspaces_broker.instances)
+
+
+@pytest.mark.asyncio
 async def test_instances_rest_project_scopes_onboarding_detection(started_broker):
     """The onboarding connect page polls GET /api/instances through the
     workspace proxy and flips its "connected" flag only for instances whose
