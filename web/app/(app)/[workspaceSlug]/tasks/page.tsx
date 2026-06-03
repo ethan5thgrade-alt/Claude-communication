@@ -6,6 +6,7 @@ import {
   brokerDelete,
   useBrokerPoll,
 } from "@/lib/broker/client"
+import { useModalDismiss } from "@/lib/use-modal-dismiss"
 import type { Instance, Task } from "@/lib/broker/types"
 
 type Props = { params: Promise<{ workspaceSlug: string }> }
@@ -19,7 +20,11 @@ export default function TasksPage({ params }: Props) {
   const { workspaceSlug } = use(params)
 
   const tasks = useBrokerPoll<{ tasks: Task[] }>(workspaceSlug, "tasks", 3000)
-  const instances = useBrokerPoll<Instance[]>(workspaceSlug, "instances", 10000)
+  const instances = useBrokerPoll<Instance[]>(
+    workspaceSlug,
+    `instances?workspace=${encodeURIComponent(workspaceSlug)}`,
+    10000,
+  )
 
   const [title, setTitle] = useState("")
   const [assignee, setAssignee] = useState("")
@@ -112,11 +117,13 @@ export default function TasksPage({ params }: Props) {
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
             placeholder="What needs doing"
+            aria-label="Task title"
             className="flex-1 min-w-[200px] rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <select
             value={assignee}
             onChange={(e) => setAssignee(e.target.value)}
+            aria-label="Task assignee"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm focus:outline-none"
           >
             <option value="">Unassigned</option>
@@ -129,6 +136,7 @@ export default function TasksPage({ params }: Props) {
           <select
             value={priority}
             onChange={(e) => setPriority(e.target.value)}
+            aria-label="Task priority"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm focus:outline-none"
           >
             <option value="low">Low</option>
@@ -298,6 +306,9 @@ function TaskDetailModal({
 }) {
   // Online instances are the assignment candidates, matching the create form.
   const onlineInstances = instances.filter((i) => i.online)
+  // Escape-to-close + focus management (document-level, so it works regardless
+  // of where focus sits when the modal opens).
+  const dialogRef = useModalDismiss<HTMLDivElement>(onClose)
 
   return (
     <div
@@ -305,13 +316,20 @@ function TaskDetailModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-sm border border-border bg-surface p-6"
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        className="w-full max-w-lg rounded-sm border border-border bg-surface p-6 focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="font-mono text-xs text-text-muted">{t.id}</div>
-            <h2 className="truncate text-lg font-semibold">{t.title}</h2>
+            <h2 id="modal-title" className="truncate text-lg font-semibold">
+              {t.title}
+            </h2>
           </div>
           <button
             onClick={onClose}
@@ -434,6 +452,7 @@ function TitleEditor({
                 if (e.key === "Enter") commit()
                 if (e.key === "Escape") setEditing(false)
               }}
+              aria-label="Task title"
               className="min-w-[180px] flex-1 rounded-sm border border-border bg-bg px-2 py-1 text-sm focus:outline-none"
             />
             <button

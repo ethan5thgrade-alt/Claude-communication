@@ -127,6 +127,7 @@ export default function AutomationsPage({ params }: Props) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Name, e.g. deploy-notify"
+            aria-label="Flow name"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <div>
@@ -138,6 +139,7 @@ export default function AutomationsPage({ params }: Props) {
               }}
               onBlur={() => setRegexError(validateRegex(trigger))}
               placeholder="Trigger regex, e.g. \\bdeploy(ed)?\\b"
+              aria-label="Trigger regex"
               className={`w-full rounded-sm border bg-bg px-3 py-2 font-mono text-sm placeholder:text-text-muted focus:outline-none ${
                 regexError ? "border-red-400" : "border-border"
               }`}
@@ -153,6 +155,7 @@ export default function AutomationsPage({ params }: Props) {
             onChange={(e) => setAction(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
             placeholder="Action template, e.g. send #ops Deploy seen: $0"
+            aria-label="Action template"
             className="rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <div className="flex justify-end">

@@ -3,6 +3,8 @@ import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Logo } from "@/components/shared/Logo"
+import { brokerGet } from "@/lib/broker/client"
+import type { Instance } from "@/lib/broker/types"
 
 function ConnectInner() {
   const router = useRouter()
@@ -11,24 +13,31 @@ function ConnectInner() {
   const [copied, setCopied] = useState(false)
   const [detected, setDetected] = useState(false)
 
-  // Poll the broker for connected instances (Phase 1: localhost broker).
+  // Detect the first connected instance for THIS workspace. Polling goes
+  // through the workspace-scoped proxy (/api/workspaces/[slug]/broker/...),
+  // which authorizes the caller as a member and injects X-Mesh-Token before
+  // reaching the broker — we never hit the broker unauthenticated, and the
+  // broker resolved is the one bound to this workspace. We additionally match
+  // on the instance's workspace_slug, the value the broker validates against
+  // its allowlist at register time and surfaces in instances_snapshot(), so a
+  // session that registered for another workspace sharing the same broker does
+  // not flip detection here.
   useEffect(() => {
+    if (ws === "your-workspace") return
     let cancelled = false
     const tick = async () => {
       try {
-        const brokerHttp = process.env.NEXT_PUBLIC_BROKER_HTTP || "http://localhost:8765"
-        const r = await fetch(brokerHttp + "/api/instances")
-        if (!r.ok) return
-        const arr = await r.json()
-        if (!cancelled && Array.isArray(arr) && arr.some((i: any) => i.online)) {
+        const arr = await brokerGet<Instance[]>(ws, "instances")
+        if (!cancelled && Array.isArray(arr) &&
+            arr.some((i) => i.online && i.workspace_slug === ws)) {
           setDetected(true)
         }
-      } catch { /* broker may not be up yet — quiet poll */ }
+      } catch { /* broker may not be up yet, or not yet a member — quiet poll */ }
     }
     const id = setInterval(tick, 2000)
     tick()
     return () => { cancelled = true; clearInterval(id) }
-  }, [])
+  }, [ws])
 
   const command =
 `python3 connect.py \\

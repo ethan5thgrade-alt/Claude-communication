@@ -1,6 +1,7 @@
 "use client"
 import { use, useEffect, useMemo, useRef, useState } from "react"
 import { brokerPost, useBrokerPoll } from "@/lib/broker/client"
+import { useModalDismiss } from "@/lib/use-modal-dismiss"
 import type { Channel, Instance, Message } from "@/lib/broker/types"
 
 type Props = { params: Promise<{ workspaceSlug: string }> }
@@ -13,7 +14,11 @@ const CHANNEL_PREFIX = "channel:"
 export default function ChatPage({ params }: Props) {
   const { workspaceSlug } = use(params)
 
-  const instances = useBrokerPoll<Instance[]>(workspaceSlug, "instances", 5000)
+  const instances = useBrokerPoll<Instance[]>(
+    workspaceSlug,
+    `instances?workspace=${encodeURIComponent(workspaceSlug)}`,
+    5000,
+  )
   const channels = useBrokerPoll<{ channels: Channel[] }>(
     workspaceSlug,
     "channels",
@@ -229,6 +234,7 @@ export default function ChatPage({ params }: Props) {
               }}
               rows={2}
               placeholder={placeholder}
+              aria-label="Message body"
               className="flex-1 resize-none rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
             />
             <button
@@ -281,6 +287,7 @@ function CreateChannelModal({
   const [members, setMembers] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const dialogRef = useModalDismiss<HTMLDivElement>(onClose)
 
   function toggle(id: string) {
     setMembers((prev) =>
@@ -309,10 +316,17 @@ function CreateChannelModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-sm border border-border bg-surface p-5"
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="modal-title"
+        className="w-full max-w-md rounded-sm border border-border bg-surface p-5 focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-sm font-semibold">Create channel</div>
+        <div id="modal-title" className="text-sm font-semibold">
+          Create channel
+        </div>
         <div className="mt-1 text-xs text-text-muted">
           Pick a name and the instances to add as members.
         </div>
@@ -325,6 +339,7 @@ function CreateChannelModal({
           onChange={(e) => setName(e.target.value)}
           placeholder="#deployments"
           autoFocus
+          aria-label="Channel name"
           className="mt-1 w-full rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
         />
 

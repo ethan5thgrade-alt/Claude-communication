@@ -85,6 +85,51 @@ export function useBrokerPoll<T>(
   return { data, error, refetch: tick }
 }
 
+// ---- live stream ----
+// Subscribe to the authenticated SSE relay of broker broadcasts. The server
+// holds the broker WebSocket; the browser only ever sees an EventSource on
+// our same-origin /sse route, so the X-Mesh-Token never reaches the client.
+//
+// This is a change *signal*, not a state source: on a relevant broker event we
+// invoke onChange so the caller can refetch the canonical REST snapshot. State
+// stays server-authoritative — we never reconstruct it from the event payload.
+//
+// `types` filters which broker event payload.type values fire onChange (the
+// "init" snapshot and the comment heartbeat never do). Pass the collection a
+// page cares about, e.g. ["approvals", "approval_request", "state_update"].
+export function useBrokerStream(
+  slug: string,
+  types: string[],
+  onChange: () => void,
+): void {
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+  const typesKey = types.join(",")
+
+  useEffect(() => {
+    const wanted = new Set(typesKey ? typesKey.split(",") : [])
+    const es = new EventSource(`/api/workspaces/${slug}/broker/sse`)
+    const handler = (ev: MessageEvent) => {
+      let payload: { type?: string }
+      try {
+        payload = JSON.parse(ev.data)
+      } catch {
+        return
+      }
+      if (typeof payload.type === "string" && wanted.has(payload.type)) {
+        onChangeRef.current()
+      }
+    }
+    // Named broker frames arrive as "broker" events; "init"/"close"/"error"
+    // are lifecycle signals the caller does not refetch on.
+    es.addEventListener("broker", handler as EventListener)
+    return () => {
+      es.removeEventListener("broker", handler as EventListener)
+      es.close()
+    }
+  }, [slug, typesKey])
+}
+
 // ---- approvals ----
 
 export function useApprovals(slug: string, intervalMs = 3000) {

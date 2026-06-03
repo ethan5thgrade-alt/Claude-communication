@@ -93,6 +93,19 @@ export async function resolveBroker(workspaceSlug: string): Promise<WorkspaceBro
   return { url, token }
 }
 
+// Build the broker UI WebSocket URL from the resolved (already SSRF-checked)
+// HTTP URL. The broker authenticates the /ui upgrade via a ?token= query
+// param — it has no header on the WS handshake — so the X-Mesh-Token is
+// carried there. This URL is server-only and must never reach the client.
+export function brokerUiWsUrl(broker: WorkspaceBroker): string {
+  const u = new URL(broker.url)
+  u.protocol = u.protocol === "https:" ? "wss:" : "ws:"
+  u.pathname = u.pathname.replace(/\/$/, "") + "/ui"
+  u.search = ""
+  if (broker.token) u.searchParams.set("token", broker.token)
+  return u.toString()
+}
+
 export async function brokerFetch(
   broker: WorkspaceBroker,
   path: string,

@@ -1,6 +1,11 @@
 "use client"
 import { use, useState } from "react"
-import { brokerApprove, brokerPost, useApprovals } from "@/lib/broker/client"
+import {
+  brokerApprove,
+  brokerPost,
+  useApprovals,
+  useBrokerStream,
+} from "@/lib/broker/client"
 import type { Approval } from "@/lib/broker/types"
 
 type Props = { params: Promise<{ workspaceSlug: string }> }
@@ -11,6 +16,13 @@ export default function ApprovalsPage({ params }: Props) {
   const { workspaceSlug } = use(params)
 
   const approvals = useApprovals(workspaceSlug)
+  // Push: refetch the canonical snapshot the instant the broker raises or
+  // resolves an approval, rather than waiting for the poll interval.
+  useBrokerStream(
+    workspaceSlug,
+    ["approvals", "approval_request", "state_update"],
+    approvals.refetch,
+  )
 
   const [action, setAction] = useState("")
   const [risk, setRisk] = useState<Approval["risk"]>("low")
@@ -73,11 +85,13 @@ export default function ApprovalsPage({ params }: Props) {
               onChange={(e) => setAction(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && create()}
               placeholder="Action to approve, e.g. deploy to production"
+              aria-label="Action to approve"
               className="flex-1 min-w-[200px] rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
             />
             <select
               value={risk}
               onChange={(e) => setRisk(e.target.value as Approval["risk"])}
+              aria-label="Risk level"
               className="rounded-sm border border-border bg-bg px-3 py-2 text-sm focus:outline-none"
             >
               {RISKS.map((r) => (
@@ -99,6 +113,7 @@ export default function ApprovalsPage({ params }: Props) {
             onChange={(e) => setDetail(e.target.value)}
             placeholder="Detail (optional)"
             rows={2}
+            aria-label="Detail"
             className="w-full resize-y rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
         </div>

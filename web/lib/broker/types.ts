@@ -10,6 +10,8 @@ export type Instance = {
   role: string
   paused: boolean
   room: string
+  workspace_slug: string
+  workspace_id: string
 }
 
 export type Message = {

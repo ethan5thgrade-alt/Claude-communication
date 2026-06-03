@@ -18,7 +18,11 @@ export default function ChannelsPage({ params }: Props) {
   // Server is authoritative for the channel list and its members; the page only
   // polls and never reconciles membership client-side.
   const channels = useChannels(workspaceSlug, 3000)
-  const instances = useBrokerPoll<Instance[]>(workspaceSlug, "instances", 10000)
+  const instances = useBrokerPoll<Instance[]>(
+    workspaceSlug,
+    `instances?workspace=${encodeURIComponent(workspaceSlug)}`,
+    10000,
+  )
 
   const [name, setName] = useState("")
   const [members, setMembers] = useState<string[]>([])
@@ -99,6 +103,7 @@ export default function ChannelsPage({ params }: Props) {
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Channel name, e.g. deploy-crew"
+            aria-label="Channel name"
             className="w-full rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <div>

@@ -110,6 +110,7 @@ export default function VotesPage({ params }: Props) {
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
             placeholder="Question, e.g. which deploy strategy"
+            aria-label="Vote question"
             className="w-full rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
           />
           <div className="space-y-2">
@@ -119,6 +120,7 @@ export default function VotesPage({ params }: Props) {
                   value={opt}
                   onChange={(e) => setOption(i, e.target.value)}
                   placeholder={`Option ${i + 1}`}
+                  aria-label={`Option ${i + 1}`}
                   className="flex-1 rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
                 />
                 <button
@@ -147,6 +149,7 @@ export default function VotesPage({ params }: Props) {
               onChange={(e) => setThreshold(e.target.value)}
               inputMode="numeric"
               placeholder="Threshold (optional)"
+              aria-label="Threshold"
               className="w-48 rounded-sm border border-border bg-bg px-3 py-2 text-sm placeholder:text-text-muted focus:outline-none"
             />
             <button
