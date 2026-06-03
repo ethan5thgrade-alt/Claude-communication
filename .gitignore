@@ -5,6 +5,7 @@ __pycache__/
 state.json
 state.json.bak
 state.json.tmp
+state.json.*.bak
 
 # Ephemeral worktree state from Claude Code subagents — never commit
 .claude/worktrees/

@@ -1,6 +1,14 @@
 -- Mesh — initial schema
 -- Auth lives in auth.users (managed by Supabase Auth). Everything else is public.
 -- RLS is enabled on every table; the policy is membership-of-workspace.
+--
+-- IMPORTANT: workspace-scoped RLS uses the SECURITY DEFINER helper
+-- public.user_workspace_ids(uid) — NEVER inline a subquery against
+-- workspace_members from a workspace_members policy (or from another
+-- table's policy that also chains through it). Postgres detects the
+-- self-reference and errors with 42P17 "infinite recursion detected
+-- in policy for relation". SECURITY DEFINER bypasses RLS for the
+-- inner lookup so the policy is decidable in one pass.
 
 ------------------------------------------------------------------------------
 -- profiles ------------------------------------------------------------------
@@ -61,10 +69,36 @@ create table public.workspace_members (
 );
 alter table public.workspace_members enable row level security;
 
--- Workspace visibility = member of it.
+-- Helper: workspaces a user belongs to. SECURITY DEFINER bypasses RLS for
+-- the inner select so callers don't trigger recursive policy evaluation.
+-- Marked stable so the planner can cache the result inside a single query.
+create or replace function public.user_workspace_ids(uid uuid)
+returns setof uuid
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select workspace_id from public.workspace_members where user_id = uid
+$$;
+
+-- Helper: roles a user holds in a workspace (used by member-management policy).
+create or replace function public.user_workspace_role(uid uuid, wid uuid)
+returns text
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select role from public.workspace_members
+  where user_id = uid and workspace_id = wid
+  limit 1
+$$;
+
+-- Workspaces: members can read; owner can update; any authed user can create.
 create policy "members can read their workspaces"
   on public.workspaces for select
-  using (id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  using (id in (select public.user_workspace_ids(auth.uid())));
 
 create policy "owners can update their workspaces"
   on public.workspaces for update
@@ -74,17 +108,20 @@ create policy "any authed user can create a workspace"
   on public.workspaces for insert
   with check (auth.uid() is not null and owner_id = auth.uid());
 
-create policy "members can read members of their workspaces"
+-- Workspace members: each user can always see their own row (no recursion).
+-- For seeing OTHER members, the SECURITY DEFINER function is what unbreaks it.
+create policy "see own membership"
   on public.workspace_members for select
-  using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  using (user_id = auth.uid());
+
+create policy "see co-members"
+  on public.workspace_members for select
+  using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create policy "owners and admins can manage members"
   on public.workspace_members for all
   using (
-    workspace_id in (
-      select workspace_id from public.workspace_members
-      where user_id = auth.uid() and role in ('owner','admin')
-    )
+    public.user_workspace_role(auth.uid(), workspace_id) in ('owner','admin')
   );
 
 ------------------------------------------------------------------------------
@@ -105,15 +142,12 @@ alter table public.invites enable row level security;
 
 create policy "workspace members can read invites"
   on public.invites for select
-  using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create policy "workspace members can create invites"
   on public.invites for insert
   with check (
-    workspace_id in (
-      select workspace_id from public.workspace_members
-      where user_id = auth.uid() and role in ('owner','admin','member')
-    )
+    public.user_workspace_role(auth.uid(), workspace_id) in ('owner','admin','member')
   );
 
 ------------------------------------------------------------------------------
@@ -134,7 +168,7 @@ create table public.instances (
 alter table public.instances enable row level security;
 
 create policy "workspace_member_all" on public.instances
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 ------------------------------------------------------------------------------
 -- channels / messages / tasks / memory / flows / approvals -----------------
@@ -151,7 +185,7 @@ create table public.channels (
 );
 alter table public.channels enable row level security;
 create policy "workspace_member_all" on public.channels
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create table public.messages (
   id            uuid primary key default gen_random_uuid(),
@@ -169,7 +203,7 @@ create index messages_workspace_created on public.messages(workspace_id, created
 create index messages_channel on public.messages(channel_id, created_at desc);
 alter table public.messages enable row level security;
 create policy "workspace_member_all" on public.messages
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create table public.tasks (
   id            uuid primary key default gen_random_uuid(),
@@ -188,7 +222,7 @@ create table public.tasks (
 );
 alter table public.tasks enable row level security;
 create policy "workspace_member_all" on public.tasks
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create table public.memory (
   id            uuid primary key default gen_random_uuid(),
@@ -205,7 +239,7 @@ create table public.memory (
 );
 alter table public.memory enable row level security;
 create policy "workspace_member_all" on public.memory
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create table public.flows (
   id            uuid primary key default gen_random_uuid(),
@@ -221,7 +255,7 @@ create table public.flows (
 );
 alter table public.flows enable row level security;
 create policy "workspace_member_all" on public.flows
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create table public.approvals (
   id            uuid primary key default gen_random_uuid(),
@@ -237,7 +271,7 @@ create table public.approvals (
 );
 alter table public.approvals enable row level security;
 create policy "workspace_member_all" on public.approvals
-  for all using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for all using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 ------------------------------------------------------------------------------
 -- api_keys / audit_log / spend ---------------------------------------------
@@ -255,10 +289,7 @@ create table public.api_keys (
 alter table public.api_keys enable row level security;
 create policy "workspace_admin_all" on public.api_keys
   for all using (
-    workspace_id in (
-      select workspace_id from public.workspace_members
-      where user_id = auth.uid() and role in ('owner','admin')
-    )
+    public.user_workspace_role(auth.uid(), workspace_id) in ('owner','admin')
   );
 
 create table public.audit_log (
@@ -274,7 +305,7 @@ create table public.audit_log (
 create index audit_workspace_created on public.audit_log(workspace_id, created_at desc);
 alter table public.audit_log enable row level security;
 create policy "workspace_member_read" on public.audit_log
-  for select using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for select using (workspace_id in (select public.user_workspace_ids(auth.uid())));
 
 create table public.spend (
   id            uuid primary key default gen_random_uuid(),
@@ -287,4 +318,4 @@ create table public.spend (
 );
 alter table public.spend enable row level security;
 create policy "workspace_member_read" on public.spend
-  for select using (workspace_id in (select workspace_id from public.workspace_members where user_id = auth.uid()));
+  for select using (workspace_id in (select public.user_workspace_ids(auth.uid())));
