@@ -78,6 +78,12 @@ export async function resolveBroker(workspaceSlug: string): Promise<WorkspaceBro
     .eq("user_id", user.id)
     .single()
   if (!member) throw new BrokerError("Not a member of this workspace.", 403)
+  // Broker access is restricted to elevated roles. Viewers (and any non
+  // owner/admin role) can read workspace state through RLS-scoped queries but
+  // must not reach the broker, which can mutate channels and run agents.
+  if (!["owner", "admin"].includes(member.role)) {
+    throw new BrokerError("Insufficient permissions to access broker.", 403)
+  }
 
   // Phase 2: workspace fields may be empty; fall back to server env (dev).
   // Phase 3+: every workspace stores its own broker URL/token.

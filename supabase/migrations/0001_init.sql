@@ -95,6 +95,19 @@ as $$
   limit 1
 $$;
 
+-- Helper: count of members in a workspace. SECURITY DEFINER bypasses RLS so the
+-- bootstrap INSERT policy can check emptiness without inlining a self-subquery
+-- against workspace_members (which would trigger 42P17 recursion). Not stable
+-- because the count changes within a statement as the bootstrap row is added.
+create or replace function public.workspace_member_count(wid uuid)
+returns int
+language sql
+security definer
+set search_path = public
+as $$
+  select count(*)::int from public.workspace_members where workspace_id = wid
+$$;
+
 -- Workspaces: members can read; owner can update; any authed user can create.
 create policy "members can read their workspaces"
   on public.workspaces for select
@@ -122,6 +135,26 @@ create policy "owners and admins can manage members"
   on public.workspace_members for all
   using (
     public.user_workspace_role(auth.uid(), workspace_id) in ('owner','admin')
+  );
+
+-- Bootstrap: when a workspace has no members yet, let the workspace owner
+-- insert their own first 'owner' row. Without this, "owners and admins can
+-- manage members" can never be satisfied for the very first row (the user
+-- holds no role yet), so workspace creation deadlocks. The empty-workspace
+-- check goes through the SECURITY DEFINER helper to avoid a self-subquery
+-- against workspace_members (42P17 recursion). Once this row exists the
+-- count is non-zero and the management policy takes over.
+create policy "bootstrap owner on workspace creation"
+  on public.workspace_members for insert
+  with check (
+    auth.uid() is not null
+    and user_id = auth.uid()
+    and role = 'owner'
+    and public.workspace_member_count(workspace_id) = 0
+    and exists (
+      select 1 from public.workspaces w
+      where w.id = workspace_id and w.owner_id = auth.uid()
+    )
   );
 
 ------------------------------------------------------------------------------
