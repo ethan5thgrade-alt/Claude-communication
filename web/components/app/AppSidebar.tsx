@@ -3,13 +3,16 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Logo } from "@/components/shared/Logo"
-import { Home, MessageSquare, ListChecks, Brain, Zap, BarChart3, Settings } from "lucide-react"
+import { Home, MessageSquare, Hash, ListChecks, Brain, ShieldCheck, Vote, Zap, BarChart3, Settings } from "lucide-react"
 
 const NAV = [
   { href: "",            label: "Home",        icon: Home },
   { href: "/chat",       label: "Chat",        icon: MessageSquare },
+  { href: "/channels",   label: "Channels",    icon: Hash },
   { href: "/tasks",      label: "Tasks",       icon: ListChecks },
   { href: "/memory",     label: "Memory",      icon: Brain },
+  { href: "/approvals",  label: "Approvals",   icon: ShieldCheck },
+  { href: "/votes",      label: "Votes",       icon: Vote },
   { href: "/automations",label: "Automations", icon: Zap },
   { href: "/analytics",  label: "Analytics",   icon: BarChart3 },
 ]

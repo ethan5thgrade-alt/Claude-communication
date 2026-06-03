@@ -1,5 +1,6 @@
 "use client"
 import { useEffect, useRef, useState } from "react"
+import type { Approval, Channel, Vote } from "@/lib/broker/types"
 
 export class BrokerClientError extends Error {
   constructor(message: string, public status: number) {
@@ -39,6 +40,14 @@ export function brokerPost<T>(slug: string, path: string, body: unknown) {
   return call<T>(slug, path, { method: "POST", body: JSON.stringify(body) })
 }
 
+export function brokerPut<T>(slug: string, path: string, body: unknown) {
+  return call<T>(slug, path, { method: "PUT", body: JSON.stringify(body) })
+}
+
+export function brokerDelete<T>(slug: string, path: string) {
+  return call<T>(slug, path, { method: "DELETE" })
+}
+
 export function useBrokerPoll<T>(
   slug: string,
   path: string,
@@ -74,4 +83,59 @@ export function useBrokerPoll<T>(
   }, [slug, path, intervalMs])
 
   return { data, error, refetch: tick }
+}
+
+// ---- approvals ----
+
+export function useApprovals(slug: string, intervalMs = 3000) {
+  return useBrokerPoll<{ approvals: Approval[] }>(slug, "approvals", intervalMs)
+}
+
+export function brokerApprove(slug: string, id: string, approved: boolean) {
+  return brokerPost<{ ok: boolean; approval: Approval }>(
+    slug,
+    `approval/${id}/respond`,
+    { approved },
+  )
+}
+
+// ---- votes ----
+
+export function useVotes(slug: string, intervalMs = 3000) {
+  return useBrokerPoll<{ votes: Vote[] }>(slug, "votes", intervalMs)
+}
+
+export function brokerCastVote(slug: string, voteId: string, option: string) {
+  return brokerPost<{ ok: boolean; vote: Vote }>(
+    slug,
+    `vote/${voteId}/cast`,
+    { option },
+  )
+}
+
+// ---- channels ----
+// Server-side group routing. The broker owns the channel list (id, name,
+// members); the page polls GET /api/channels and never tracks membership
+// client-side.
+
+export function useChannels(slug: string, intervalMs = 3000) {
+  return useBrokerPoll<{ channels: Channel[] }>(slug, "channels", intervalMs)
+}
+
+export function brokerCreateChannel(
+  slug: string,
+  name: string,
+  members: string[],
+) {
+  return brokerPost<{ ok: boolean; channel: Channel }>(slug, "channels", {
+    name,
+    members,
+  })
+}
+
+export function brokerDeleteChannel(slug: string, channelId: string) {
+  return brokerDelete<{ ok: boolean; removed: number }>(
+    slug,
+    `channels/${channelId}`,
+  )
 }
