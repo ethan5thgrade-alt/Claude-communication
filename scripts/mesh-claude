@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# mesh-claude — launch an INTERACTIVE Claude Code session under a dedicated
+# account (subscription), wired into the local Agent Mesh broker.
+#
+# Usage:
+#   ./scripts/mesh-claude <role>            # e.g. mesh-claude alpha
+#   ./scripts/mesh-claude <role> --setup    # bootstrap config dir only, don't launch
+#
+# Each role gets:
+#   ~/.claude-<role>/                isolated CLAUDE_CONFIG_DIR (own login/credentials)
+#   ~/.claude-<role>/settings.json   UserPromptSubmit hook -> mesh messages auto-injected
+#   env: INSTANCE_ID=cc-<role>, INSTANCE_NAME=<role>, MESH_TOKEN (from session.env)
+#
+# First launch per role: run /login inside the session to sign into THAT
+# account's subscription. Credentials persist in the config dir afterwards.
+#
+# This is the interactive counterpart to launch-multi-account.sh (which is
+# for detached/tmux fleets). One terminal = one role = one subscription.
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
+SESSION_ENV="$HOME/.agent-mesh/session.env"
+
+ROLE="${1:-}"
+if [ -z "$ROLE" ] || [[ "$ROLE" == -* ]]; then
+  echo "usage: mesh-claude <role> [--setup]   (e.g. mesh-claude alpha)" >&2
+  exit 1
+fi
+SETUP_ONLY=0
+[ "${2:-}" = "--setup" ] && SETUP_ONLY=1
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "error: 'claude' CLI not found on PATH." >&2
+  exit 1
+fi
+
+CFG="$HOME/.claude-$ROLE"
+mkdir -p "$CFG"
+
+# --- settings.json: add the mesh UserPromptSubmit hook (merge, don't clobber) ---
+SETTINGS="$CFG/settings.json"
+DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}" \
+python3 - "$SETTINGS" "$REPO" "$ROLE" <<'PY'
+import json, sys
+from pathlib import Path
+
+settings_path, repo, role = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+hook_cmd = f"INSTANCE_ID=cc-{role} {repo}/scripts/mesh hook"
+
+try:
+    settings = json.loads(settings_path.read_text())
+except (OSError, ValueError):
+    settings = {}
+
+hooks = settings.setdefault("hooks", {})
+ups = hooks.setdefault("UserPromptSubmit", [])
+already = any(
+    h.get("command", "").endswith("scripts/mesh hook")
+    for entry in ups for h in entry.get("hooks", [])
+)
+if not already:
+    ups.append({"hooks": [{"type": "command", "command": hook_cmd}]})
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    print(f"   hook installed -> {settings_path}")
+else:
+    print(f"   hook already present in {settings_path}")
+PY
+
+# --- MESH_TOKEN from live session env (exported so hook + mesh CLI inherit) ---
+MESH_TOKEN="${MESH_TOKEN:-}"
+if [ -z "$MESH_TOKEN" ] && [ -f "$SESSION_ENV" ]; then
+  MESH_TOKEN="$(grep -E '^MESH_TOKEN=' "$SESSION_ENV" | head -1 | cut -d= -f2)"
+fi
+[ -z "$MESH_TOKEN" ] && echo "warning: no MESH_TOKEN found — mesh calls will be rejected" >&2
+
+echo "→ role=$ROLE  instance=cc-$ROLE"
+echo "   config: $CFG"
+echo "   broker: http://localhost:8765"
+if [ ! -f "$CFG/.credentials.json" ] && [ ! -d "$CFG/auth" ]; then
+  echo "   NOTE: no credentials yet for this role — run /login inside the session"
+fi
+
+[ "$SETUP_ONLY" = "1" ] && { echo "   (setup only — not launching)"; exit 0; }
+
+cd "$REPO"
+exec env \
+  CLAUDE_CONFIG_DIR="$CFG" \
+  INSTANCE_ID="cc-$ROLE" \
+  INSTANCE_NAME="$ROLE" \
+  INSTANCE_ROLE="$ROLE" \
+  MESH_TOKEN="$MESH_TOKEN" \
+  claude

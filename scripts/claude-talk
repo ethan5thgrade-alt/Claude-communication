@@ -23,9 +23,16 @@
 
 set -euo pipefail
 
-REPO="${AGENT_MESH_REPO:-$HOME/Claude-communication}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="${AGENT_MESH_REPO:-$(cd "$HERE/.." && pwd)}"
 BROKER_PID_FILE="$HOME/.agent-mesh-broker.pid"
 INBOX_DIR="$HOME/.agent-mesh-inbox"
+# Recover the mesh token persisted by join/team-join (or the tunnel session)
+# when MESH_TOKEN isn't already in the environment.
+MESH_TOKEN="${MESH_TOKEN:-$(cat "$INBOX_DIR/.mesh_token" 2>/dev/null || true)}"
+if [ -z "${MESH_TOKEN:-}" ]; then
+    MESH_TOKEN="$(grep '^MESH_TOKEN=' "$HOME/.agent-mesh/session.env" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+fi
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BROKER_HOST="${MESH_HOST:-localhost}"
 BROKER_PORT="${MESH_UI_PORT:-8765}"
@@ -116,6 +123,7 @@ case "$cmd" in
             INSTANCE_PROJECT="${INSTANCE_PROJECT:-claude-code}" \
             INSTANCE_ROOM="$room" \
             BROKER_URL="ws://localhost:${MESH_INST_PORT:-8766}" \
+            ${MESH_TOKEN:+MESH_TOKEN="$MESH_TOKEN"} \
             "$PYTHON_BIN" -u "$REPO/connect.py" \
             >"$INBOX_DIR/${instance_id}.log" 2>&1 &
         echo $! > "$INBOX_DIR/${instance_id}.pid"
@@ -505,7 +513,7 @@ with open('$INBOX_DIR/.team', 'w') as f:
             INSTANCE_NAME="$name" \
             INSTANCE_PROJECT="${INSTANCE_PROJECT:-claude-code}" \
             INSTANCE_ROOM="$join_room" \
-            BROKER_WS_URL="$broker_ws_url" \
+            BROKER_URL="$broker_ws_url" \
             ${MESH_TOKEN:+MESH_TOKEN="$MESH_TOKEN"} \
             "$PYTHON_BIN" -u "$REPO/connect.py" \
             >"$INBOX_DIR/${instance_id}.log" 2>&1 &

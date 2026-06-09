@@ -11,7 +11,34 @@ import urllib.request
 
 BASE = "http://localhost:8765"
 MDNS_SERVICE_TYPE = "_agent-mesh._tcp.local."
-MESH_TOKEN = os.environ.get("MESH_TOKEN") or None
+
+
+def _load_token() -> str | None:
+    """MESH_TOKEN env var, then ~/.agent-mesh-token (written by the `token`
+    subcommand), then the MESH_TOKEN= line in ~/.agent-mesh/session.env."""
+    tok = os.environ.get("MESH_TOKEN")
+    if tok:
+        return tok
+    try:
+        with open(os.path.expanduser("~/.agent-mesh-token")) as f:
+            tok = f.read().strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    try:
+        with open(os.path.expanduser("~/.agent-mesh/session.env")) as f:
+            for line in f:
+                if line.startswith("MESH_TOKEN="):
+                    tok = line.split("=", 1)[1].strip()
+                    if tok:
+                        return tok
+    except OSError:
+        pass
+    return None
+
+
+MESH_TOKEN = _load_token()
 
 
 def _auth_headers() -> dict:
@@ -97,7 +124,13 @@ def _parse_flags(args, names):
         a = args[i]
         if a.startswith("--"):
             key = a[2:]
-            if key in names and i + 1 < len(args):
+            if "=" in key:
+                key, _, val = key.partition("=")
+                if key in names:
+                    flags[key] = val
+                    i += 1
+                    continue
+            elif key in names and i + 1 < len(args):
                 flags[key] = args[i + 1]
                 i += 2
                 continue

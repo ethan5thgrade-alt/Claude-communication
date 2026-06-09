@@ -18,24 +18,50 @@ attached (claude-talk-bot --reply-to-human).
 """
 from __future__ import annotations
 import json
+import os
 import sys
 import time
 import urllib.request
 from typing import Callable, Optional
 
-BASE = "http://localhost:8765"
+BASE = os.environ.get("E2E_BASE", "http://localhost:8765")
+
+def _load_token() -> Optional[str]:
+    """MESH_TOKEN env var, else the MESH_TOKEN= line in ~/.agent-mesh/session.env."""
+    tok = os.environ.get("MESH_TOKEN")
+    if tok:
+        return tok
+    try:
+        with open(os.path.expanduser("~/.agent-mesh/session.env")) as f:
+            for line in f:
+                if line.startswith("MESH_TOKEN="):
+                    tok = line.split("=", 1)[1].strip()
+                    if tok:
+                        return tok
+    except OSError:
+        pass
+    return None
+
+MESH_TOKEN = _load_token()
+
+def _headers(extra: Optional[dict] = None) -> dict:
+    h = dict(extra or {})
+    if MESH_TOKEN:
+        h["X-Mesh-Token"] = MESH_TOKEN
+    return h
 
 class TestFail(Exception): ...
 
 def get(path: str) -> dict:
-    with urllib.request.urlopen(f"{BASE}{path}") as r:
+    req = urllib.request.Request(f"{BASE}{path}", headers=_headers())
+    with urllib.request.urlopen(req) as r:
         return json.load(r)
 
 def post(path: str, body: dict) -> dict:
     req = urllib.request.Request(
         f"{BASE}{path}",
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=_headers({"Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(req) as r:
         return json.load(r)
@@ -246,7 +272,7 @@ def t11():
     req = urllib.request.Request(
         f"{BASE}/api/channels",
         data=json.dumps({"name": "e2e-test", "members": ["cc-alpha", "cc-bravo"]}).encode(),
-        headers={"Content-Type": "application/json"})
+        headers=_headers({"Content-Type": "application/json"}))
     with urllib.request.urlopen(req) as r:
         ch = json.load(r)["channel"]
     cid = ch["id"]

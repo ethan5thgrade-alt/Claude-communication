@@ -2184,7 +2184,10 @@ function confirmModal(title, body, onOk) {
 // ============================================================================
 function connect() {
   const token = getMeshToken();
-  const url = `ws://${location.host}/ui${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+  // wss:// when the page itself is https (e.g. behind the cloudflared tunnel) —
+  // browsers block insecure ws:// from a secure page.
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const url = `${wsProto}://${location.host}/ui${token ? `?token=${encodeURIComponent(token)}` : ''}`;
   setConnState('connecting');
   let ws;
   try {

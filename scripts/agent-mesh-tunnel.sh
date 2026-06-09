@@ -54,4 +54,35 @@ CF_PID=$!
   done
 ) &
 
+# Watchdog: cloudflared can wedge with its control stream failing forever
+# while the process stays alive, so launchd's KeepAlive never restarts it
+# (observed 2026-06-06 and 2026-06-09). Probe the PUBLIC url end-to-end;
+# any HTTP status (even 426 Upgrade Required from the WS port) means alive.
+# Two consecutive failed probes -> kill cloudflared -> wrapper exits ->
+# launchd relaunches us -> fresh tunnel + session.env update.
+(
+  sleep 90  # give the tunnel time to register before first probe
+  fails=0
+  while kill -0 "${CF_PID}" 2>/dev/null; do
+    URL="$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "${TUNNEL_LOG}" | head -n1 || true)"
+    if [[ -n "${URL:-}" ]]; then
+      code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "${URL}" || true)"
+      if [[ "${code}" == "000" || "${code}" == "530" ]]; then
+        fails=$((fails + 1))
+        echo "[$(date '+%FT%T%z')] watchdog: probe failed (${code}), strike ${fails}/2"
+      else
+        fails=0
+      fi
+      if [[ ${fails} -ge 2 ]]; then
+        echo "[$(date '+%FT%T%z')] watchdog: tunnel wedged — killing cloudflared for restart"
+        kill "${CF_PID}" 2>/dev/null || true
+        sleep 2
+        kill -9 "${CF_PID}" 2>/dev/null || true
+        exit 0
+      fi
+    fi
+    sleep 120
+  done
+) &
+
 wait "${CF_PID}"

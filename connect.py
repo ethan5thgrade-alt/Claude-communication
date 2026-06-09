@@ -151,6 +151,9 @@ ROLE = os.environ.get("INSTANCE_ROLE") or os.environ.get("ROLE") or ""
 # workspace_slug so a workspace-gated broker can validate it.
 WORKSPACE_SLUG = (os.environ.get("INSTANCE_WORKSPACE")
                   or os.environ.get("WORKSPACE_SLUG") or "")
+# INSTANCE_ROOM: optional room to register into (claude-talk start --room X
+# exports this). Without it the broker places the instance in room "default".
+ROOM = os.environ.get("INSTANCE_ROOM") or ""
 # BROKER_URL: prefer env var. Falls through to localhost; if localhost fails on
 # the first attempt and the env var was NOT set, we'll mDNS-browse for a LAN
 # broker (see _discover_broker_url).
@@ -536,6 +539,8 @@ async def _client_loop():
                     reg_payload["role"] = ROLE
                 if WORKSPACE_SLUG:
                     reg_payload["workspace_slug"] = WORKSPACE_SLUG
+                if ROOM:
+                    reg_payload["room"] = ROOM
                 if MESH_TOKEN:
                     reg_payload["token"] = MESH_TOKEN
                 await ws.send(json.dumps(reg_payload))

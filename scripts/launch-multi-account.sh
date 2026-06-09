@@ -52,7 +52,7 @@ launch-multi-account.sh — run multiple Claude Code accounts on one machine
 env (optional):
   BROKER_URL   override the mesh broker WebSocket URL (default: $BROKER_URL_DEFAULT)
   MESH_TOKEN   shared-token auth if the broker requires it
-  USE_TMUX     "1" to open each instance in a tmux pane (else nohup-detached)
+  USE_TMUX     "0" to disable tmux (default: a tmux window per role when available)
 EOF
 }
 
@@ -83,6 +83,13 @@ cmd_kill() {
       echo "$role=$pid" >> "$kept"
       continue
     fi
+    case "$pid" in
+      tmux:*)
+        echo "stopping $role (tmux window ${pid#tmux:})…"
+        tmux kill-window -t "${pid#tmux:}" 2>/dev/null || true
+        continue
+        ;;
+    esac
     if kill -0 "$pid" 2>/dev/null; then
       echo "stopping $role (pid $pid)…"
       kill "$pid" 2>/dev/null || true
@@ -133,7 +140,7 @@ launch_one() {
   )
   [ -n "${MESH_TOKEN:-}" ] && env_block+=(MESH_TOKEN="$MESH_TOKEN")
 
-  if [ "${USE_TMUX:-0}" = "1" ] && command -v tmux >/dev/null 2>&1; then
+  if [ "${USE_TMUX:-1}" != "0" ] && command -v tmux >/dev/null 2>&1; then
     # Start (or attach to) a shared session and add a window per role
     tmux has-session -t agent-mesh 2>/dev/null || tmux new-session -d -s agent-mesh -n broker
     tmux new-window -t agent-mesh -n "$role" \
@@ -143,12 +150,11 @@ launch_one() {
     return 0
   fi
 
-  # Detached, log to file
-  (
-    cd "$REPO"
-    env "${env_block[@]}" nohup claude >"$log" 2>&1 &
-    echo "$role=$!" >> "$PIDS_FILE"
-  )
+  # No tmux: the `claude` TUI needs a TTY and dies immediately under nohup,
+  # so there is no detached fallback.
+  echo "error: tmux unavailable (not installed, or USE_TMUX=0) — cannot launch detached instances." >&2
+  echo "  Install tmux, or use scripts/mesh-claude <role> for an interactive single session." >&2
+  exit 1
 }
 
 # -------- arg dispatch --------

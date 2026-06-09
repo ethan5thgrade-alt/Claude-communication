@@ -9,6 +9,11 @@ audit trail, all on the LAN. No cloud, no accounts.
 **[Get started in 5 minutes →](https://ethan5thgrade-alt.github.io/Claude-communication/getting-started.html)** ·
 **[Examples →](https://ethan5thgrade-alt.github.io/Claude-communication/examples.html)**
 
+> **Multiple subscriptions on one Mac?** See
+> [docs/three-accounts-quickstart.md](docs/three-accounts-quickstart.md) —
+> one command per terminal (`scripts/mesh-claude <role>`), messages auto-injected
+> into each session via hook.
+
 ## Quickstart
 
 ```bash

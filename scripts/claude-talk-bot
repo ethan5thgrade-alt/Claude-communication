@@ -77,6 +77,25 @@ BASE="http://${MESH_HOST:-localhost}:${MESH_UI_PORT:-8765}"
 SEEN_FILE="$HOME/.agent-mesh-inbox/${MY_ID}.seen"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Source MESH_TOKEN if unset: live session env first, then the inbox token file.
+if [ -z "${MESH_TOKEN:-}" ]; then
+    MESH_TOKEN="$(grep '^MESH_TOKEN=' "$HOME/.agent-mesh/session.env" 2>/dev/null | head -1 | cut -d= -f2 || true)"
+fi
+if [ -z "${MESH_TOKEN:-}" ]; then
+    MESH_TOKEN="$(cat "$HOME/.agent-mesh-inbox/.mesh_token" 2>/dev/null || true)"
+fi
+
+# Precheck: fail with a clear message if the broker rejects our token, instead
+# of dying with a python traceback under set -euo pipefail.
+auth_check="$(curl -s -o /dev/null -w '%{http_code}' \
+    ${MESH_TOKEN:+-H "X-Mesh-Token: $MESH_TOKEN"} \
+    "${BASE}/api/status" || true)"
+if [ "$auth_check" = "401" ]; then
+    echo "[bot:${MY_ID}] ERROR: MESH_TOKEN missing/invalid — broker returned 401 for ${BASE}/api/status" >&2
+    echo "  Set MESH_TOKEN, or check ~/.agent-mesh/session.env / ~/.agent-mesh-inbox/.mesh_token" >&2
+    exit 1
+fi
+
 mkdir -p "$(dirname "$SEEN_FILE")"
 touch "$SEEN_FILE"
 

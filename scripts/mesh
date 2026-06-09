@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""mesh — minimal REST companion for a Claude Code session on the Agent Mesh.
+
+Designed to be called from inside a Claude Code session (via Bash) or from
+hooks. Zero dependencies (urllib only). Auth + identity come from env, with
+~/.agent-mesh/session.env as fallback for the token.
+
+Commands:
+  mesh send <to> <text...>     send a message (to = all | <instance-id> | channel:<id>)
+  mesh inbox [--peek]          print unread messages for me; advance cursor (--peek: don't)
+  mesh hook                    UserPromptSubmit hook mode: print unread block, always exit 0
+  mesh wait [--timeout SECS]   block until a new message for me arrives, print it, exit 0
+  mesh who                     list known instances
+  mesh status                  broker health + my identity as seen by this tool
+
+Identity:  INSTANCE_ID (required for inbox/hook/wait; default cc-local)
+Broker:    MESH_HTTP (default http://localhost:8765)
+Auth:      MESH_TOKEN env, else parsed from ~/.agent-mesh/session.env
+Cursor:    ~/.agent-mesh/cursor-<INSTANCE_ID>  (last seen numeric message id)
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+SESSION_ENV = Path.home() / ".agent-mesh" / "session.env"
+CURSOR_DIR = Path.home() / ".agent-mesh"
+
+
+def _token() -> str | None:
+    tok = os.environ.get("MESH_TOKEN")
+    if tok:
+        return tok
+    try:
+        for line in SESSION_ENV.read_text().splitlines():
+            m = re.match(r"^MESH_TOKEN=(\S+)", line.strip())
+            if m:
+                return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
+BASE = os.environ.get("MESH_HTTP", "http://localhost:8765").rstrip("/")
+TOKEN = _token()
+ME = os.environ.get("INSTANCE_ID", "cc-local")
+
+
+def _req(path: str, body: dict | None = None, timeout: float = 5.0):
+    headers = {"Content-Type": "application/json"}
+    if TOKEN:
+        headers["X-Mesh-Token"] = TOKEN
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, headers=headers,
+                                 method="POST" if body is not None else "GET")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def _msg_num(mid) -> int:
+    """Monotonic numeric part of a message id like 'm123' or '123'."""
+    m = re.search(r"(\d+)$", str(mid))
+    return int(m.group(1)) if m else -1
+
+
+def _cursor_path() -> Path:
+    return CURSOR_DIR / f"cursor-{ME}"
+
+
+def _read_cursor() -> int:
+    try:
+        return int(_cursor_path().read_text().strip())
+    except (OSError, ValueError):
+        return -1
+
+
+def _write_cursor(n: int) -> None:
+    try:
+        CURSOR_DIR.mkdir(mode=0o700, exist_ok=True)
+        _cursor_path().write_text(str(n))
+    except OSError:
+        pass
+
+
+def _fetch_messages(limit: int = 200) -> list[dict]:
+    res = _req(f"/api/messages?limit={limit}")
+    return res.get("messages", [])
+
+
+def _unread(msgs: list[dict]) -> tuple[list[dict], int]:
+    """Messages addressed to me (or broadcast/channel-to-me), unseen, not from me."""
+    cur = _read_cursor()
+    mine, hi = [], cur
+    for m in msgs:
+        n = _msg_num(m.get("id"))
+        hi = max(hi, n)
+        if n <= cur:
+            continue
+        if m.get("from") == ME:
+            continue
+        to = m.get("to", "all")
+        if to in ("all", ME):
+            mine.append(m)
+    return mine, hi
+
+
+def _fmt(m: dict) -> str:
+    ch = f" #{m['channel']}" if m.get("channel") else ""
+    scope = "broadcast" if m.get("to") == "all" else "to you"
+    return f"[{m.get('ts', '?')[:19]}] {m.get('from', '?')} ({scope}{ch}): {m.get('text', '')}"
+
+
+def cmd_send(args: list[str]) -> int:
+    if len(args) < 2:
+        print("usage: mesh send <to> <text...>", file=sys.stderr)
+        return 1
+    to, text = args[0], " ".join(args[1:])
+    res = _req("/api/send", {"to": to, "text": text, "from": ME})
+    ok = res.get("ok", bool(res.get("message")))
+    mid = (res.get("message") or {}).get("id") or res.get("channel", "")
+    print(f"sent ({mid})" if ok else f"error: {res}")
+    return 0 if ok else 1
+
+
+def cmd_inbox(args: list[str]) -> int:
+    peek = "--peek" in args
+    mine, hi = _unread(_fetch_messages())
+    if not mine:
+        print("(no new mesh messages)")
+    for m in mine:
+        print(_fmt(m))
+    if not peek:
+        _write_cursor(hi)
+    return 0
+
+
+def cmd_hook(_args: list[str]) -> int:
+    """UserPromptSubmit hook: stdout becomes context. NEVER block the prompt."""
+    try:
+        if not _cursor_path().exists():
+            # First run for this instance: seed past history so we never dump
+            # weeks of old messages into a fresh session's context.
+            _, hi = _unread(_fetch_messages())
+            _write_cursor(hi)
+            return 0
+        mine, hi = _unread(_fetch_messages())
+        if mine:
+            lines = "\n".join(_fmt(m) for m in mine)
+            print(f"[agent-mesh] {len(mine)} new message(s) for {ME}:\n{lines}\n"
+                  f"(reply with: scripts/mesh send <instance-id|all> <text>)")
+            _write_cursor(hi)
+    except Exception:
+        pass  # broker down / auth issue → stay silent, never break the session
+    return 0
+
+
+def cmd_wait(args: list[str]) -> int:
+    timeout = 0.0
+    if "--timeout" in args:
+        try:
+            timeout = float(args[args.index("--timeout") + 1])
+        except (IndexError, ValueError):
+            print("usage: mesh wait [--timeout SECS]", file=sys.stderr)
+            return 1
+    start = time.time()
+    while True:
+        try:
+            mine, hi = _unread(_fetch_messages())
+            if mine:
+                for m in mine:
+                    print(_fmt(m))
+                _write_cursor(hi)
+                return 0
+        except Exception:
+            pass  # transient broker hiccup: keep waiting
+        if timeout and (time.time() - start) > timeout:
+            print("(mesh wait timed out — no new messages)")
+            return 2
+        time.sleep(3)
+
+
+def cmd_who(_args: list[str]) -> int:
+    res = _req("/api/instances")
+    inst = res.get("instances", res) if isinstance(res, dict) else res
+    if isinstance(inst, dict):
+        inst = [{"id": k, **(v if isinstance(v, dict) else {})} for k, v in inst.items()]
+    if not inst:
+        print("(no instances known to the broker)")
+    for m in inst:
+        if isinstance(m, dict):
+            iid = m.get("id", "?")
+            name = m.get("name", iid)
+            online = "online" if m.get("online") or m.get("connected") else "offline"
+            print(f"{iid}  ({name}, {online})")
+        else:
+            print(m)
+    return 0
+
+
+def cmd_status(_args: list[str]) -> int:
+    print(f"me:     {ME}")
+    print(f"broker: {BASE}")
+    print(f"token:  {'set' if TOKEN else 'MISSING'}")
+    try:
+        h = _req("/api/health")
+        print(f"health: {json.dumps(h)}")
+        return 0
+    except Exception as e:
+        print(f"health: UNREACHABLE ({e})")
+        return 1
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd, rest = args[0], args[1:]
+    table = {"send": cmd_send, "inbox": cmd_inbox, "hook": cmd_hook,
+             "wait": cmd_wait, "who": cmd_who, "status": cmd_status}
+    fn = table.get(cmd)
+    if not fn:
+        print(f"unknown command: {cmd}\n{__doc__}", file=sys.stderr)
+        return 1
+    try:
+        return fn(rest)
+    except urllib.error.HTTPError as e:
+        print(f"broker error {e.code}: {e.read().decode(errors='replace')[:200]}",
+              file=sys.stderr)
+        return 1
+    except urllib.error.URLError as e:
+        print(f"broker unreachable at {BASE}: {e.reason}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
