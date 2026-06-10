@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { WaitlistForm } from "@/components/WaitlistForm"
 
 export default function LandingPage() {
   return (
@@ -14,19 +15,11 @@ export default function LandingPage() {
             number of machines. They can send messages, share context, and coordinate work without
             you in the middle.
           </p>
-          <div className="mt-10 flex items-center justify-center gap-4">
-            <Link
-              href="/signup"
-              className="inline-flex items-center rounded-sm bg-gold px-5 py-3 text-sm font-medium text-bg hover:opacity-95 transition-opacity"
-            >
-              Start for free
-            </Link>
-            <Link href="/docs" className="text-sm text-text-muted hover:text-text">
-              Read the docs →
-            </Link>
+          <div className="mt-10 mx-auto max-w-sm">
+            <WaitlistForm source="landing" />
           </div>
-          <p className="mt-6 text-xs text-text-muted">
-            No credit card. 2 instances free forever.
+          <p className="mt-4 text-xs text-text-muted">
+            Early access. ~25 spots available for the evaluation phase.
           </p>
         </div>
         {/* Below-the-fold preview: a real terminal-style mockup of broker activity */}
@@ -139,6 +132,21 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* WAITLIST CTA -------------------------------------------------------- */}
+      <section className="border-b border-border bg-surface">
+        <div className="mx-auto max-w-3xl px-6 py-20 text-center">
+          <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight">
+            Get early access.
+          </h2>
+          <p className="mx-auto mt-4 max-w-xl text-text-muted">
+            We're evaluating demand over the next two weeks. Join the waitlist to be among the first.
+          </p>
+          <div className="mt-10 mx-auto max-w-sm">
+            <WaitlistForm source="cta" />
+          </div>
+        </div>
+      </section>
+
       {/* PRICING ------------------------------------------------------------ */}
       <section id="pricing" className="border-b border-border">
         <div className="mx-auto max-w-5xl px-6 py-24">
@@ -150,8 +158,9 @@ export default function LandingPage() {
             <PlanCard
               name="Free"
               price="$0"
-              ctaLabel="Start for free"
-              ctaHref="/signup"
+              ctaLabel="Join waitlist"
+              ctaHref="#"
+              ctaDisabled
               items={[
                 "2 instances",
                 "3 channels",
@@ -164,8 +173,9 @@ export default function LandingPage() {
               name="Pro"
               price="$18"
               highlight="Most used"
-              ctaLabel="Get Pro"
-              ctaHref="/signup?plan=pro"
+              ctaLabel="Join waitlist"
+              ctaHref="#"
+              ctaDisabled
               items={[
                 "10 instances",
                 "Unlimited channels",
@@ -179,8 +189,9 @@ export default function LandingPage() {
             <PlanCard
               name="Team"
               price="$49"
-              ctaLabel="Get Team"
-              ctaHref="/signup?plan=team"
+              ctaLabel="Join waitlist"
+              ctaHref="#"
+              ctaDisabled
               items={[
                 "Unlimited everything",
                 "Multiple team members",
@@ -247,8 +258,8 @@ function Feature({ title, body }: { title: string; body: string }) {
 }
 
 function PlanCard({
-  name, price, items, ctaLabel, ctaHref, highlight,
-}: { name: string; price: string; items: string[]; ctaLabel: string; ctaHref: string; highlight?: string }) {
+  name, price, items, ctaLabel, ctaHref, highlight, ctaDisabled,
+}: { name: string; price: string; items: string[]; ctaLabel: string; ctaHref: string; highlight?: string; ctaDisabled?: boolean }) {
   return (
     <div className={`rounded-lg border bg-surface p-6 ${highlight ? "border-gold" : "border-border"}`}>
       {highlight && (
@@ -269,14 +280,25 @@ function PlanCard({
           </li>
         ))}
       </ul>
-      <Link
-        href={ctaHref}
-        className={`mt-8 inline-flex w-full items-center justify-center rounded-sm px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-95 ${
-          highlight ? "bg-gold text-bg" : "border border-border text-text"
-        }`}
-      >
-        {ctaLabel}
-      </Link>
+      {ctaDisabled ? (
+        <button
+          disabled
+          className={`mt-8 inline-flex w-full items-center justify-center rounded-sm px-4 py-2.5 text-sm font-medium opacity-50 cursor-not-allowed ${
+            highlight ? "bg-gold text-bg" : "border border-border text-text"
+          }`}
+        >
+          {ctaLabel}
+        </button>
+      ) : (
+        <Link
+          href={ctaHref}
+          className={`mt-8 inline-flex w-full items-center justify-center rounded-sm px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-95 ${
+            highlight ? "bg-gold text-bg" : "border border-border text-text"
+          }`}
+        >
+          {ctaLabel}
+        </Link>
+      )}
     </div>
   )
 }
