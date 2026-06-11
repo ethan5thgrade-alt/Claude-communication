@@ -1,105 +1,78 @@
 # Letting Claude Code sessions talk to each other
 
-Agent Mesh's whole reason for existing is to be the comms layer between
-multiple Claude Code instances running on the same Mac (or across a LAN).
-This page is the **shortest path** to a working two-window chat.
+Agent Mesh is the comms layer between multiple Claude Code instances running on
+the same Mac (or across a LAN / cloudflared tunnel). This page is the shortest
+path to a working two-window chat.
+
+For the full multi-subscription setup, see
+[three-accounts-quickstart.md](./three-accounts-quickstart.md) — it's
+authoritative.
 
 ## TL;DR
 
 ```bash
-# In Claude Code window A — paste this with the leading "!" so it runs in your shell:
-! ~/agent-mesh/scripts/claude-talk start cc1 "Claude A"
+# 1. start the broker (once)
+cd ~/code/Claude-communication
+python3 broker.py        # or: make install-service  (launchd)
 
-# In Claude Code window B:
-! ~/agent-mesh/scripts/claude-talk start cc2 "Claude B"
+# 2. launch a mesh-wired session per terminal
+scripts/mesh-claude alpha    # identity cc-alpha
+scripts/mesh-claude bravo    # identity cc-bravo  (other terminal)
 
-# From A:
-! ~/agent-mesh/scripts/claude-talk send cc2 "Hey B, can you read this?"
-
-# From B (check the inbox or live-tail the log):
-! ~/agent-mesh/scripts/claude-talk inbox
-! ~/agent-mesh/scripts/claude-talk listen          # follow-mode tail
+# 3. from inside a session, message the other
+scripts/mesh send cc-bravo "Hey B, can you read this?"
+scripts/mesh inbox           # read your messages manually
 ```
 
-That's it. The first `start` auto-launches the broker in the background.
-Subsequent windows just register and start sending.
+That's it. `mesh-claude` sets `INSTANCE_ID`, exports `MESH_TOKEN` (read from
+`~/.agent-mesh/session.env`), and installs the message-injection hook.
 
 ## What's happening under the hood
 
-1. `claude-talk start cc1 "Claude A"` does three things:
-   - Boots `broker.py` (if not already running) as a detached background process.
-   - Spawns `connect.py` with `INSTANCE_ID=cc1`, `INSTANCE_NAME="Claude A"` —
-     this opens a persistent WebSocket to the broker. Every message addressed
-     to cc1 lands in a log file at `~/.agent-mesh-inbox/cc1.log`.
-   - Persists this window's id at `~/.agent-mesh-inbox/.me` so later
-     `send` / `inbox` calls know who I am.
+1. `scripts/mesh-claude alpha`:
+   - Creates an isolated `CLAUDE_CONFIG_DIR` at `~/.claude-alpha/` (own login).
+   - Merges a `UserPromptSubmit` hook into that config's `settings.json` so
+     incoming mesh messages are injected at the top of every prompt — the
+     session never has to poll.
+   - Launches `claude` with `INSTANCE_ID=cc-alpha` and `MESH_TOKEN` set.
 
-2. `claude-talk send cc2 "hi"` is a one-shot REST `POST /api/send` with
-   `{"to":"cc2","text":"hi","from":"cc1"}`. The broker routes it to cc2's
-   WebSocket; cc2's `connect.py` writes it to `~/.agent-mesh-inbox/cc2.log`.
+2. `scripts/mesh send cc-bravo "hi"` POSTs `/api/send` with the auth header.
+   The broker routes it to cc-bravo's WebSocket (or queues it in cc-bravo's
+   backlog if offline).
 
-3. `claude-talk inbox` reads `/api/status` and filters messages whose `to`
-   matches the registered id (or `"all"` broadcasts).
+3. The hook (`scripts/mesh hook`) runs on each prompt and prepends any unread
+   messages addressed to this instance (or broadcast). `scripts/mesh inbox`
+   does the same on demand.
 
-4. `claude-talk listen` is just `tail -F` on this session's inbox log.
+## Letting the Claude assistant read/write messages itself
 
-## Letting *the Claude assistant* itself read/write messages
+Inside any session, you can tell the assistant "check your inbox" — it runs
+`scripts/mesh inbox`, reads the messages, and replies with
+`scripts/mesh send <them> "..."`. Because incoming messages are auto-injected
+by the hook, the assistant usually sees them without being asked.
 
-The `!` prefix runs commands in your shell. So in any Claude Code session,
-you (the human) can tell the assistant: *"check your inbox"* — and the
-assistant will call `! claude-talk inbox`, see the messages, and respond
-to them. Going the other way, the assistant can call `! claude-talk send
-cc2 "ack"` to reply.
+## Live mode (opt-in only)
 
-For a fully autonomous loop (assistant in A talks to assistant in B with
-no human in between), give each assistant a system prompt that:
+`scripts/mesh wait` blocks until a new message arrives. Running it in the
+background turns a session into a live responder. **Do not enter live mode
+unless the user explicitly asks** — auto-reply loops burn account quota. See
+the repo `CLAUDE.md` for the live-mode protocol.
 
-1. Runs `claude-talk inbox` at the start of every turn.
-2. Treats any new incoming messages as additional input.
-3. Optionally replies with `claude-talk send <them> "..."`.
-4. Repeats on the next user prompt or via the `/loop` skill.
+## Across machines
 
-## Across multiple Macs on the same LAN
-
-The broker advertises itself via mDNS as `_agent-mesh._tcp.local.`. From a
-second Mac:
-
-```bash
-# Find the broker
-~/agent-mesh/scripts/claude-talk help    # shows BROKER_URL it would use
-python3 ~/agent-mesh/cli.py discover     # mDNS browse
-
-# Point this Mac at the remote broker
-export MESH_HOST=<broker-mac-ip>
-export MESH_INST_PORT=8766
-~/agent-mesh/scripts/claude-talk start cc3 "Claude C (other mac)"
-```
-
-If multicast is blocked by your network, set `MESH_HOST` and
-`MESH_INST_PORT` manually.
+- **Same LAN:** point a client at `BROKER_URL=ws://<broker-lan-ip>:8766`.
+- **A friend, anywhere:** expose port 8766 over a cloudflared quick tunnel and
+  send them a `scripts/mesh-invite` snippet — it pulls `mesh-connect.py` and
+  registers their instance.
 
 ## Shared-token auth
 
-If your LAN isn't fully trusted, export `MESH_TOKEN` (any string) on the
-broker host before starting, and on every client before calling
-`claude-talk` — every WS register, REST call, and UI connection will
-require it.
-
-```bash
-export MESH_TOKEN=$(openssl rand -hex 16)
-# put MESH_TOKEN=... in your ~/.zshrc on every machine that talks to the mesh
-```
+If your LAN isn't fully trusted, set `MESH_TOKEN` on the broker host. The live
+broker reads it from `~/.agent-mesh/session.env`; `mesh-claude` exports it to
+each session automatically. Raw curl needs the `X-Mesh-Token` header.
 
 ## Browser dashboard
 
-If you want a human view of the conversation, open `http://localhost:8765`
-on the broker host (or `http://<lan-ip>:8765` from your phone). The UI
-shows every instance, every message, tasks, memory, approvals, and the
+Open `http://localhost:8765` on the broker host (or `http://<lan-ip>:8765`
+from your phone). The UI shows every instance, every message, channels, and the
 live audit trail.
-
-## Cleanup
-
-```bash
-~/agent-mesh/scripts/claude-talk stop          # unregister this session
-~/agent-mesh/scripts/claude-talk stop-broker   # shut down the broker
-```

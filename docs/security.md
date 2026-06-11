@@ -16,7 +16,7 @@ By default `broker.py` binds both ports on `0.0.0.0`:
 
 Any device that can route to your Mac on those ports can:
 
-- Open the UI and read all messages, tasks, memory, audit, etc.
+- Open the UI and read all messages, channels, and the audit log
 - POST to `/api/send` and inject messages
 - Connect a fake instance via the instance WebSocket and impersonate any ID
 
@@ -24,17 +24,17 @@ This is fine on a home Wi-Fi network where you control every device. It is
 **not** fine on coffee-shop Wi-Fi, conference Wi-Fi, or any network where
 untrusted devices can reach you.
 
-## Shared-token authentication (v1.1+)
+## Shared-token authentication
 
 If `MESH_TOKEN` is set in the broker's environment, every connection must
 present the token:
 
 - **Instances**: include `"token": "<value>"` in the `register` payload.
-  `connect.py` reads `MESH_TOKEN` from its own env and forwards it.
+  `mesh-connect.py` and `scripts/mesh` read `MESH_TOKEN` from the env and
+  forward it; `scripts/mesh-claude` exports it into each session.
 - **UI**: connect to `ws://host:8765/ui?token=<value>`. Open the UI from
   `http://host:8765/?token=<value>` and the page propagates it.
-- **REST**: include `X-Mesh-Token: <value>` on every request. The `cli.py`
-  wrapper reads `MESH_TOKEN` from env automatically.
+- **REST**: include `X-Mesh-Token: <value>` on every request.
 
 Without a matching token, connections are closed before the handshake
 completes. Audit log records the rejected attempt.
@@ -52,11 +52,13 @@ export MESH_TOKEN=<paste here>
 python3 broker.py
 ```
 
-The same value goes into the env on every machine that runs `connect.py`,
-and the same value goes into any device that opens the UI.
+The same value goes into the env on every machine that runs a client, and the
+same value goes into any device that opens the UI.
 
-(Implementation details and the exact rejection behaviour are owned by
-batch 4; see that batch's tests for the canonical contract.)
+The live broker reads `MESH_TOKEN` from `~/.agent-mesh/session.env` when the
+env var is absent, so the launchd-managed install keeps working without the
+token being committed to the repo. `tests/test_broker.py` is the canonical
+contract for the exact rejection behaviour.
 
 ## TLS
 
@@ -82,28 +84,24 @@ publicly even with a token.
 `state.json` is plaintext JSON, written next to `broker.py`. It contains:
 
 - Every message ever relayed (until you clear it)
-- All shared memory entries — including anything an agent dumped there
-- Audit log of every action
+- The channel roster
+- Audit log of every action (capped at 1000 in-state; dated daily backups
+  under `~/.agent-mesh/backups/` keep the full history)
 
-If you keep secrets out of `broker_memory(...)` calls and don't paste
-credentials into chat, the file is uninteresting. If you do, that file is a
-liability — back it up encrypted (`tar | gpg`) and don't sync it via Dropbox.
+If you don't paste credentials into chat, the file is uninteresting. If you
+do, that file is a liability — back it up encrypted (`tar | gpg`) and don't
+sync it via Dropbox.
 
-The launchd-managed install also writes:
-
-- `~/Library/Logs/agent-mesh/out.log` — every banner + every audit line
-- `~/Library/Logs/agent-mesh/err.log` — tracebacks
-
-Both are world-readable by default. `chmod 600` if other users share the
-machine.
+The launchd-managed install also writes a rotating broker log at
+`~/Library/Logs/agent-mesh/broker.log` (via `MESH_LOG_FILE`, 10MB × 5). It's
+world-readable by default — `chmod 600` if other users share the machine.
 
 ## What's not covered
 
 - **No authorization model.** Once an instance is connected, it can send to
-  any ID, claim any task, write any memory entry. The token gates entry,
-  not permissions inside the mesh.
-- **No rate limiting** on instance messages (flow execution does have its
-  own per-flow rate cap — see batch 2).
+  any ID. The token gates entry, not permissions inside the mesh.
+- **Per-IP rate limit** on `/api/send` only (configurable via
+  `MESH_RATE_LIMIT`); other instance messages are not rate-limited.
 - **No replay protection** on the audit log. An attacker with file write
   access can rewrite history.
 - **No sandboxing** of message contents. The UI escapes HTML, but if you

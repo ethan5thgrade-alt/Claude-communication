@@ -2,229 +2,170 @@
 
 **Local multi-agent coordination for Claude Code.** Run a tiny broker on
 your laptop, point your Claude Code instances at it, and message them from
-your phone (or from each other) — tasks, shared memory, approvals,
-audit trail, all on the LAN. No cloud, no accounts.
-
-📖 **[Read the docs site →](https://ethan5thgrade-alt.github.io/Claude-communication/)** ·
-**[Get started in 5 minutes →](https://ethan5thgrade-alt.github.io/Claude-communication/getting-started.html)** ·
-**[Examples →](https://ethan5thgrade-alt.github.io/Claude-communication/examples.html)**
+your phone (or from each other) — messages, channels, and an audit trail,
+all on the LAN (or over a tunnel to a friend). Self-hosted, no accounts.
 
 > **Multiple subscriptions on one Mac?** See
 > [docs/three-accounts-quickstart.md](docs/three-accounts-quickstart.md) —
 > one command per terminal (`scripts/mesh-claude <role>`), messages auto-injected
-> into each session via hook.
+> into each session via a UserPromptSubmit hook.
 
 ## Quickstart
 
 ```bash
-# 1. install deps (zeroconf optional, enables mDNS LAN discovery)
+# 1. install deps
 python3 -m pip install --user websockets aiohttp
-python3 -m pip install --user zeroconf   # optional
 
 # 2. run the broker
 python3 broker.py
 
-# 3. connect an instance (from inside a Claude Code session)
-python3 connect.py
-
-# ...or register under a specific workspace with a distinct name:
-python3 connect.py --workspace my-ws --name "Claude 1"
+# 3. launch a mesh-wired Claude Code session (own subscription per role)
+scripts/mesh-claude alpha
 ```
 
-`--workspace` takes a URL-safe slug (the same form the web app routes on) and
-sets the instance project plus a workspace-scoped instance id. `--name` adds a
-human label and keeps multiple instances in one workspace distinct
-(`my-ws-claude-1`, `my-ws-claude-2`). Both also accept the `INSTANCE_ID`,
-`INSTANCE_PROJECT`, and `INSTANCE_NAME` env vars.
-
 Open `http://localhost:8765` (or `http://<lan-ip>:8765` from your phone)
-for the UI.
+for the dashboard UI.
 
-For the narrative walk-through with two instances talking to each other,
-see [docs/quickstart.md](docs/quickstart.md).
+For the narrative walk-through, see [docs/quickstart.md](docs/quickstart.md)
+and [docs/three-accounts-quickstart.md](docs/three-accounts-quickstart.md).
+
+## Entry points
+
+| Command                          | What it does                                          |
+|----------------------------------|-------------------------------------------------------|
+| `python3 broker.py`              | Run the broker (HTTP/UI 8765, WS 8766)                |
+| `scripts/mesh <cmd>`             | CLI from inside a session: send / inbox / who / status |
+| `scripts/mesh-claude <role>`     | Launch a Claude Code session wired into the mesh      |
+| `scripts/mesh-invite`            | Print a one-paste invite for a friend on another box  |
+| `mesh-connect.py`                | Zero-dep friend client the invite snippet pulls + runs |
+
+## Sending messages from a session
+
+```bash
+scripts/mesh send <instance-id> <text>   # DM
+scripts/mesh send all <text>             # broadcast
+scripts/mesh send channel:<id> <text>    # channel
+scripts/mesh inbox                       # read messages
+scripts/mesh who                         # who's online
+scripts/mesh status                      # broker health
+```
+
+Incoming messages are auto-injected at the top of each prompt via the
+`mesh hook` (installed by `mesh-claude`), so sessions don't poll.
 
 ## Connect a friend's Claude Code
 
 If you're hosting the broker and want someone else to join from another
-machine (no LAN required), expose port 8766 over a tunnel (e.g. cloudflared
-quick tunnel) and hand them an invite:
+machine (no LAN required), expose port 8766 over a tunnel (a cloudflared
+quick tunnel works) and hand them an invite:
 
 ```bash
 ./scripts/mesh-invite --name "Their Name"
 ```
 
-That prints a one-line snippet they paste into their terminal — or into
-a Claude Code session with a leading `!`. It pulls the friend-grade
-`mesh-connect.py` from this repo, auto-installs the `websockets` pip
-package, and registers their instance. They can then chat with `@<id>`
-DMs and plain lines for broadcasts; `/quit` to disconnect.
+That prints a one-line snippet they paste into their terminal. It pulls the
+friend-grade `mesh-connect.py` from this repo, auto-installs the `websockets`
+pip package, and registers their instance.
 
-The cloudflared **quick** tunnel URL rotates whenever cloudflared
-restarts, so re-run `mesh-invite` if the link stops working. For a stable
-URL, use a Cloudflare named tunnel against your own domain.
+The cloudflared **quick** tunnel URL rotates whenever cloudflared restarts,
+so re-run `mesh-invite` if the link stops working. For a stable URL, use a
+Cloudflare named tunnel against your own domain.
 
 ## Documentation
 
-| Page                                         | What's in it                                        |
-|----------------------------------------------|-----------------------------------------------------|
-| [Quickstart](docs/quickstart.md)             | Full tutorial: install → 2 instances → first task   |
-| [Architecture](docs/architecture.md)         | Broker / instance / UI roles + mermaid diagrams     |
-| [Security](docs/security.md)                 | LAN exposure model, shared-token auth, TLS guidance |
-| [Operations](docs/operations.md)             | Log paths, health & metrics, backups, restart       |
-| [Extending](docs/extending.md)               | How to add a new message type, worked example       |
-| [Troubleshooting](docs/troubleshooting.md)   | Firewall, mDNS, reconnect storms, blank UI, etc.    |
-
-## Helper reference
-
-From inside a Claude Code REPL after `import connect`:
-
-```python
-broker_send("Task complete.")                      # → human
-broker_send("Match my format.", to="cc2")          # → another instance
-broker_broadcast("API contract finalized.")
-broker_status("Writing SSE endpoint", workload=80)
-ok = broker_approve_and_wait("Drop prod table", risk="high", timeout=300)
-broker_memory("SSE_FORMAT", "{pct, ticker}", mem_type="contract")
-broker_task_create("Write CSV parser", assignee="cc2", priority="high")
-broker_task_done("T003", result="merged in PR #41")
-broker_vote_and_wait("Ship M5?", ["yes", "no"])
-broker_log("retry after 503", level="warn")        # → audit row, no chat
-```
-
-For typed event handling, call `connect.parse_event(payload)` inside your
-incoming-message hook — it returns a `MessageEvent` / `TaskAssignedEvent` /
-`MemoryEvent` / etc. dataclass (with IDE field help) for known event types,
-or `None` for unknown ones. The existing dict-based path is unaffected.
+| Page                                                       | What's in it                                  |
+|------------------------------------------------------------|-----------------------------------------------|
+| [Quickstart](docs/quickstart.md)                           | Two sessions talking through the broker       |
+| [Three accounts](docs/three-accounts-quickstart.md)        | Authoritative multi-subscription setup        |
+| [Architecture](docs/architecture.md)                       | Broker / instance / UI roles                  |
+| [Security](docs/security.md)                               | LAN exposure model, shared-token auth         |
+| [Operations](docs/operations.md)                           | Log paths, health, backups, restart           |
+| [Extending](docs/extending.md)                             | How to add a new message type                 |
+| [Troubleshooting](docs/troubleshooting.md)                 | Firewall, reconnect storms, blank UI, etc.    |
 
 ## Auto-start on Mac
 
 ```bash
 make install-service     # copy plist → ~/Library/LaunchAgents, launchctl load
 make status              # show whether it's running
-make tail-logs           # follow stdout + stderr
+make tail-logs           # follow logs
 make restart-service     # unload + load
 make uninstall-service   # stop and remove
 ```
 
-Logs land in `~/Library/Logs/agent-mesh/{out,err}.log`. See
-[docs/operations.md](docs/operations.md) for log rotation and the plist
-template details.
-
-## Plugin bridge
-
-If you have Claude Code plugins installed under
-`~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`, the broker scans
-them at startup and exposes them through a discovery-only bridge — it returns
-the resolved skill/agent/command path + manifest, never executes plugin code.
-
-```bash
-curl http://localhost:8765/api/plugins
-curl http://localhost:8765/api/plugins/apple-hig-expert
-```
-
-From an instance: `broker_plugin_invoke("apple-hig-expert", "apple-hig-expert")`
-fires a request; listen for `plugin_invoke_result` on the incoming stream.
-The UI's PLUGINS tab groups everything by marketplace.
-
-## Non-Python clients
-
-A zero-dependency TypeScript client lives in [`clients/`](./clients/). It
-mirrors `connect.py` and runs on Node 22+, Bun, Deno, and in browsers. See
-[`clients/README.md`](./clients/README.md).
+The broker rotates its own log at `~/Library/Logs/agent-mesh/broker.log`
+(10MB × 5) via the `MESH_LOG_FILE` env var set in the plist. The plist no
+longer carries a token; the broker reads `MESH_TOKEN` from
+`~/.agent-mesh/session.env` when the env var is absent. See
+[docs/operations.md](docs/operations.md).
 
 ## REST API
 
-| Method | Path             | Purpose                                          |
-|--------|------------------|--------------------------------------------------|
-| GET    | `/api/status`    | Snapshot (instances, last 50 msgs, tasks, etc.)  |
-| GET    | `/api/state`     | Full persisted state                             |
-| GET    | `/api/health`    | Liveness + uptime + online count + build sha     |
-| GET    | `/api/metrics`   | Prometheus text-format metrics                   |
-| GET    | `/api/instances` | List of connected/known instances                |
-| GET    | `/api/tasks`     | All tasks                                        |
-| GET    | `/api/memory`    | All shared memory entries                        |
-| GET    | `/api/plugins`   | Catalog of installed Claude Code plugins         |
-| POST   | `/api/send`      | Send a message `{to, text}`                      |
-| POST   | `/api/clear`     | Clear message history                            |
-| POST   | `/api/task`      | Create a task `{title, assignee, priority, deps}`|
-| POST   | `/api/memory`    | Write memory `{key, value, mem_type}`            |
+The broker exposes a small REST surface. The route registry in `broker.py`
+(`_build_app`) is authoritative; the commonly used endpoints:
+
+| Method | Path               | Purpose                                    |
+|--------|--------------------|--------------------------------------------|
+| GET    | `/api/status`      | Snapshot (instances, recent messages)      |
+| GET    | `/api/state`       | Full persisted state                       |
+| GET    | `/api/health`      | Liveness + uptime + online count + build   |
+| GET    | `/api/metrics`     | Prometheus text-format metrics             |
+| GET    | `/api/instances`   | Connected/known instances                  |
+| GET    | `/api/messages`    | Message history (`?room=`, `?limit=`)      |
+| GET    | `/api/audit`       | Audit rows (`?limit=`)                      |
+| GET    | `/api/channels`    | List channels                              |
+| POST   | `/api/channels`    | Create a channel                           |
+| DELETE | `/api/channels/{id}` | Delete a channel                         |
+| GET    | `/api/share-info`  | URL + token a friend needs to join         |
+| POST   | `/api/send`        | Send a message `{to, text}`                |
+| POST   | `/api/clear`       | Clear message history                      |
 
 ## Security — shared-token auth
 
-By default the broker accepts any LAN connection. For shared networks, set
-`MESH_TOKEN` and every endpoint will require it:
+Set `MESH_TOKEN` and every endpoint requires it. raw curl needs the header:
 
 ```bash
-export MESH_TOKEN=$(openssl rand -hex 16)
-python3 broker.py
-# instances + cli.py read the env var automatically; raw curl needs the header:
 curl -X POST http://localhost:8765/api/send \
      -H "X-Mesh-Token: $MESH_TOKEN" \
      -H 'Content-Type: application/json' \
-     -d '{"to":"cc1","text":"hi"}'
+     -d '{"to":"cc-alpha","text":"hi"}'
 ```
 
 The UI WS expects `?token=...` in the query string. See
-[docs/security.md](docs/security.md) for the full model. Unset or empty
-`MESH_TOKEN` disables auth.
-
-## LAN auto-discovery (mDNS)
-
-If `zeroconf` is installed the broker advertises itself as
-`_agent-mesh._tcp.local.`. `python3 cli.py discover` lists every broker on
-the LAN; `connect.py` auto-falls-back to mDNS when `BROKER_URL` is unset and
-localhost fails. To force a specific broker:
-
-```bash
-BROKER_URL=ws://192.168.1.42:8766 python3 connect.py
-```
-
-Some networks block multicast — set `BROKER_URL` manually in that case.
-
-## CLI
-
-`cli.py` wraps the REST surface:
-
-```bash
-python3 cli.py send cc1 "What are you working on?"
-python3 cli.py status | state | clear | health | metrics
-python3 cli.py instances | tasks | memory | discover
-python3 cli.py task "write CSV parser" --assignee cc2 --priority high
-python3 cli.py memorize API_SHAPE "{pct, ticker}"
-```
+[docs/security.md](docs/security.md). Unset/empty `MESH_TOKEN` disables auth.
 
 ## Tests, pre-commit, CI
 
 ```bash
-python3.13 -m pytest tests/ -v   # broker tests + client helper tests
-bash scripts/smoke.sh             # spins broker on 18998/18999, exercises REST
-pre-commit install                # ruff + check-yaml + EOF hygiene
+python3 -m pytest -q                  # broker protocol tests
+PYTHON_BIN=python3 bash scripts/smoke.sh   # spins broker on 18998/18999, exercises REST
+pre-commit install                    # ruff + check-yaml + EOF hygiene
 ```
 
-GitHub Actions runs the pytest matrix on Python 3.10/3.11/3.12/3.13 plus the
-smoke script — see `.github/workflows/ci.yml`.
+GitHub Actions runs a single gate: static syntax checks, broker import-smoke,
+the pytest suite, and the REST smoke script — see `.github/workflows/ci.yml`.
 
 ## File map
 
 ```
-agent-mesh/
+Claude-communication/
 ├── broker.py                      # Core relay: WS on 8766 + HTTP/UI on 8765
-├── connect.py                     # Python instance snippet
-├── cli.py                         # REST sender for terminal use
-├── index.html                     # Single-file UI
+├── index.html                     # Single-file dashboard UI
+├── mesh-connect.py                # Zero-dep friend client
 ├── state.json                     # Persisted state (created on first run)
 ├── Makefile                       # dev / test / install-service / tail-logs
 ├── com.voidlabs.agent-mesh.plist  # launchd template (auto-start on Mac boot)
-├── tests/
-│   ├── test_broker.py             # WS/REST protocol tests
-│   └── test_clients.py            # End-to-end connect.py helper tests
-├── clients/                       # Non-Python clients (TypeScript)
+├── scripts/
+│   ├── mesh                       # in-session CLI (send / inbox / who / hook)
+│   ├── mesh-claude                # launch a mesh-wired Claude Code session
+│   ├── mesh-invite                # one-paste friend invite
+│   └── smoke.sh                   # REST smoke test (alt ports)
+├── tests/test_broker.py           # WS/REST protocol tests
+├── examples/multi_device_smoke.py # 2-device share-info flow (no LLM cost)
 ├── docs/                          # Detailed documentation (see table above)
-├── scripts/smoke.sh               # REST smoke test
-├── .github/workflows/ci.yml       # pytest matrix on push/PR
+├── .github/workflows/ci.yml       # static + pytest + smoke gate
 ├── .pre-commit-config.yaml        # ruff + hygiene hooks
 ├── CONTRIBUTING.md                # branch/PR conventions
-├── ROADMAP.md                     # 100-item build-out plan
 └── README.md
 ```
 

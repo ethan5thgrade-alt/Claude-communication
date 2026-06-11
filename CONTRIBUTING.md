@@ -5,8 +5,7 @@ changes scoped and tested.
 
 ## Branch naming
 
-- `batch-N` — for items from `ROADMAP.md` (one batch per worktree)
-- `feat/<short-handle>` — new features outside the roadmap
+- `feat/<short-handle>` — new features
 - `fix/<short-handle>` — bugfixes
 
 Avoid long-lived branches. Rebase onto `main` before opening a PR.
@@ -24,8 +23,7 @@ PYTHON_BIN=python3 bash scripts/smoke.sh
 pre-commit run --all-files
 ```
 
-If you're touching `broker.py` or `connect.py`, the test suite is the
-contract — keep it green.
+If you're touching `broker.py`, the test suite is the contract — keep it green.
 
 ## Pull request template
 
