@@ -22,6 +22,16 @@ if [[ ! -x "${CLOUDFLARED}" ]]; then
   exit 1
 fi
 
+# Named-tunnel mode: if scripts/setup-named-tunnel.sh has written a config for
+# the agent-mesh tunnel, run THAT — a permanent hostname, no URL scraping and no
+# session.env patching (the URL never changes). launchd's KeepAlive handles
+# restarts. Until that config exists, fall through to the rotating quick tunnel.
+CF_CONFIG="${HOME}/.cloudflared/config.yml"
+if [[ -f "${CF_CONFIG}" ]] && grep -q "agent-mesh" "${CF_CONFIG}" 2>/dev/null; then
+  echo "[$(date '+%FT%T%z')] running named tunnel via ${CF_CONFIG}"
+  exec "${CLOUDFLARED}" tunnel --config "${CF_CONFIG}" run
+fi
+
 # Run cloudflared in the foreground (launchd keeps us alive). Tee its output
 # to a log so we can grep the trycloudflare URL once it appears.
 : > "${TUNNEL_LOG}"

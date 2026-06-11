@@ -17,7 +17,7 @@
 set -euo pipefail
 
 SESSION_FILE="${HOME}/.agent-mesh/session.env"
-RAW_URL="https://raw.githubusercontent.com/ethan5thgrade-alt/Claude-communication/main/mesh-connect.py"
+GH_RAW="https://raw.githubusercontent.com/ethan5thgrade-alt/Claude-communication/main/mesh-connect.py"
 
 if [[ ! -f "${SESSION_FILE}" ]]; then
   echo "error: ${SESSION_FILE} not found." >&2
@@ -53,6 +53,15 @@ done
 FLAG=""
 [[ "${MODE}" == "listen" ]] && FLAG=" --listen"
 
+# Connector source. With a named tunnel (TUNNEL_URL is an https:// dashboard
+# host that fronts the broker's HTTP port), the broker serves the connector at
+# /connect.py over the same trusted origin as the token — no GitHub round-trip.
+# The rotating quick tunnel only fronts the WS port, so fall back to GitHub raw.
+CONNECT_SRC="${GH_RAW}"
+if [[ "${TUNNEL_URL:-}" == https://* && "${TUNNEL_URL:-}" != *trycloudflare.com* ]]; then
+  CONNECT_SRC="${TUNNEL_URL%/}/connect.py"
+fi
+
 NAME_PART=""
 if [[ -n "${FRIEND_NAME}" ]]; then
   NAME_PART="INSTANCE_NAME=\"${FRIEND_NAME}\" "
@@ -63,10 +72,10 @@ cat <<EOF
 # Paste into a terminal (or into Claude Code with a leading \`!\`).
 # Tunnel URL is ephemeral — if it stops working, ask for a fresh invite.
 
-${NAME_PART}BROKER_URL='${BROKER_URL}' MESH_TOKEN='${MESH_TOKEN:-}' python3 <(curl -sL ${RAW_URL})${FLAG}
+${NAME_PART}BROKER_URL='${BROKER_URL}' MESH_TOKEN='${MESH_TOKEN:-}' python3 <(curl -sL ${CONNECT_SRC})${FLAG}
 
 # What this does:
-#   - Pulls mesh-connect.py from the public repo
+#   - Pulls mesh-connect.py from ${CONNECT_SRC}
 #   - Auto-installs the 'websockets' pip package if missing
 #   - Registers your session with the mesh and starts chatting
 #   - Type messages + Enter to broadcast; @<id> to DM; /quit to exit

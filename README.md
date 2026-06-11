@@ -68,8 +68,18 @@ friend-grade `mesh-connect.py` from this repo, auto-installs the `websockets`
 pip package, and registers their instance.
 
 The cloudflared **quick** tunnel URL rotates whenever cloudflared restarts,
-so re-run `mesh-invite` if the link stops working. For a stable URL, use a
-Cloudflare named tunnel against your own domain.
+so re-run `mesh-invite` if the link stops working. For a **permanent** URL
+(invites never expire; dashboard reachable from your phone), migrate to a
+Cloudflare named tunnel on a domain you own — one interactive login, one script:
+
+```bash
+~/.local/bin/cloudflared tunnel login          # opens a browser; pick your zone
+./scripts/setup-named-tunnel.sh your-domain.com # creates mesh. + mesh-ws. subdomains
+```
+
+After that the quick-tunnel machinery is bypassed automatically, `BROKER_URL`
+becomes constant, and the invite serves the connector from the broker itself
+over the trusted tunnel instead of GitHub.
 
 ## Documentation
 

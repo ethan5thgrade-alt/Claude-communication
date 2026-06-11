@@ -488,13 +488,15 @@ def cmd_doctor(_args: list[str]) -> int:
           f"cloudflared running (pid {tpid})" if tpid else "no cloudflared tunnel process",
           f"launchctl kickstart -k gui/{os.getuid()}/{TUNNEL_LABEL}")
 
-    # 5. tunnel URL actually fronts OUR broker (WS server answers plain HTTP with 426)
-    url = os.environ.get("TUNNEL_URL") or _session_env("TUNNEL_URL")
+    # 5. the friend WS endpoint (BROKER_URL) actually fronts OUR broker — the
+    #    websockets server answers a plain-HTTP GET with 426 Upgrade Required.
+    #    Probe BROKER_URL (not TUNNEL_URL): with a named tunnel TUNNEL_URL is the
+    #    HTTP dashboard (returns 200), while BROKER_URL is the WS host (426).
+    broker_url = os.environ.get("BROKER_URL") or _session_env("BROKER_URL") or ""
+    url = (broker_url.replace("wss://", "https://", 1).replace("ws://", "http://", 1)
+           if broker_url else (os.environ.get("TUNNEL_URL") or _session_env("TUNNEL_URL")))
     if not url:
-        broker_url = os.environ.get("BROKER_URL") or _session_env("BROKER_URL") or ""
-        url = broker_url.replace("wss://", "https://", 1) if broker_url else None
-    if not url:
-        check("tunnel url", False, "no TUNNEL_URL in env or session.env",
+        check("tunnel url", False, "no BROKER_URL/TUNNEL_URL in env or session.env",
               "restart tunnel and re-run scripts/mesh-invite")
     else:
         _, code = _run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
