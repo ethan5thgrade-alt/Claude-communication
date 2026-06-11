@@ -7,7 +7,7 @@
 import { NextResponse, type NextRequest } from "next/server"
 import { updateSession } from "@/lib/supabase/middleware"
 
-const PUBLIC_PATHS = ["/", "/pricing", "/about", "/blog", "/changelog", "/docs", "/privacy", "/terms", "/login", "/signup", "/verify", "/invite"]
+const PUBLIC_PATHS = ["/", "/changelog", "/docs", "/login", "/signup", "/verify", "/invite"]
 const STATIC_PATHS = ["/_next", "/api", "/favicon.ico", "/og-image.png", "/manifest.json"]
 
 export async function middleware(request: NextRequest) {

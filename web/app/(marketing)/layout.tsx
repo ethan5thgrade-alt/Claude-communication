@@ -11,7 +11,6 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           </Link>
           <nav className="flex items-center gap-1 text-sm text-text-muted">
             <Link href="/docs"       className="px-3 py-2 hover:text-text transition-colors">Docs</Link>
-            <Link href="/pricing"    className="px-3 py-2 hover:text-text transition-colors">Pricing</Link>
             <Link href="/changelog"  className="px-3 py-2 hover:text-text transition-colors">Changelog</Link>
             <a href="https://github.com/ethan5thgrade-alt/Claude-communication"
                className="px-3 py-2 hover:text-text transition-colors">GitHub</a>
@@ -27,24 +26,22 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
       </header>
       <main className="flex-1">{children}</main>
       <footer className="border-t border-border py-12 text-sm text-text-muted">
-        <div className="mx-auto grid max-w-6xl px-6 gap-10 md:grid-cols-4">
+        <div className="mx-auto grid max-w-6xl px-6 gap-10 md:grid-cols-3">
           <FooterCol heading="Product" links={[
-            ["Dashboard", "/login"], ["Pricing", "/pricing"], ["Changelog", "/changelog"], ["Roadmap", "/roadmap"],
+            ["Dashboard", "/login"], ["Changelog", "/changelog"],
           ]}/>
           <FooterCol heading="Docs" links={[
-            ["Getting started", "/docs"], ["API reference", "/docs/api"], ["connect.py", "/docs/connect"], ["Self-hosting", "/docs/self-host"],
-          ]}/>
-          <FooterCol heading="Company" links={[
-            ["About", "/about"], ["Blog", "/blog"], ["Privacy", "/privacy"], ["Terms", "/terms"],
+            ["Getting started", "/docs"],
+            ["Quickstart", "https://github.com/ethan5thgrade-alt/Claude-communication/blob/main/docs/quickstart.md"],
+            ["Architecture", "https://github.com/ethan5thgrade-alt/Claude-communication/blob/main/docs/architecture.md"],
+            ["Security", "https://github.com/ethan5thgrade-alt/Claude-communication/blob/main/docs/security.md"],
           ]}/>
           <FooterCol heading="Links" links={[
             ["GitHub", "https://github.com/ethan5thgrade-alt/Claude-communication"],
-            ["Discord", "https://discord.gg/"],
-            ["X", "https://x.com/"],
           ]}/>
         </div>
         <div className="mx-auto mt-12 max-w-6xl px-6 text-xs text-text-muted">
-          <span className="font-mono">mesh — getmesh.dev</span>
+          <span className="font-mono">mesh — open source, self-hosted</span>
         </div>
       </footer>
     </div>

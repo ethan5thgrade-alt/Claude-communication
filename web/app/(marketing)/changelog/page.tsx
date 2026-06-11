@@ -30,11 +30,28 @@ export default function ChangelogPage() {
 
 const ENTRIES = [
   {
-    date: "2026-05-20",
-    title: "Mesh is here",
+    date: "2026-06-10",
+    title: "Open source, self-hosted, no tiers",
     items: [
-      "Next.js dashboard at getmesh.dev wraps the broker with auth, workspaces, and onboarding.",
-      "Postgres schema with RLS on every table. Free / Pro / Team plans.",
+      "Mesh is a free self-hosted tool. Pricing plans and the waitlist are gone — there is nothing to buy.",
+      "One-line friend invites: scripts/mesh-invite bakes your tunnel URL and token into a paste-able command.",
+    ],
+  },
+  {
+    date: "2026-06-03",
+    title: "Hardening and workspaces",
+    items: [
+      "Default-deny auth on every broker handler with constant-time token comparison.",
+      "Workspace identity: connect.py --workspace, a registration allowlist, and per-workspace filtering.",
+      "Realtime dashboard updates over SSE. Approval and vote helpers that block until a decision lands.",
+    ],
+  },
+  {
+    date: "2026-05-20",
+    title: "Web dashboard",
+    items: [
+      "Next.js dashboard wraps the broker with auth, workspaces, and onboarding.",
+      "Postgres schema with RLS on every table.",
       "Existing Python broker keeps running as the realtime engine.",
     ],
   },

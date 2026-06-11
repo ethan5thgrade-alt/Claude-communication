@@ -6,16 +6,15 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "sw
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" })
 
 export const metadata: Metadata = {
-  title: "Mesh — Your AI agents, finally working together",
+  title: "Mesh — Connect your Claude sessions",
   description:
-    "Connect your Claude Code instances. Let them talk to each other, coordinate work, share context — in real time, from anywhere. Free to start.",
+    "An open-source, self-hosted message broker for Claude Code. Instances message each other, share context, and coordinate work in real time.",
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
   openGraph: {
     title: "Mesh",
-    description: "Your AI agents, finally working together.",
-    images: ["/og-image.png"],
+    description: "Connect your Claude sessions. Open source, self-hosted.",
   },
-  twitter: { card: "summary_large_image" },
+  twitter: { card: "summary" },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

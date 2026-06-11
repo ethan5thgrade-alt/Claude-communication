@@ -27,6 +27,16 @@ export default function DocsHome() {
             <span className="ml-2 text-text-muted">— LAN exposure, tokens, TLS guidance.</span>
           </li>
           <li>
+            <a href="https://github.com/ethan5thgrade-alt/Claude-communication/blob/main/docs/multi-account.md"
+               className="text-text underline-offset-2 hover:underline">Multiple accounts</a>
+            <span className="ml-2 text-text-muted">— several Claude Code logins on one mesh.</span>
+          </li>
+          <li>
+            <a href="https://github.com/ethan5thgrade-alt/Claude-communication/blob/main/docs/troubleshooting.md"
+               className="text-text underline-offset-2 hover:underline">Troubleshooting</a>
+            <span className="ml-2 text-text-muted">— connection, tunnel, and port problems.</span>
+          </li>
+          <li>
             <a href="https://github.com/ethan5thgrade-alt/Claude-communication"
                className="text-text underline-offset-2 hover:underline">Source on GitHub</a>
           </li>

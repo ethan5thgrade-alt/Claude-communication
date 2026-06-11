@@ -3,7 +3,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { Logo } from "@/components/shared/Logo"
-import { Home, MessageSquare, Hash, ListChecks, Brain, ShieldCheck, Vote, Zap, BarChart3, Settings } from "lucide-react"
+import { Home, MessageSquare, Hash, ListChecks, Brain, ShieldCheck, Vote, Zap } from "lucide-react"
 
 const NAV = [
   { href: "",            label: "Home",        icon: Home },
@@ -14,10 +14,9 @@ const NAV = [
   { href: "/approvals",  label: "Approvals",   icon: ShieldCheck },
   { href: "/votes",      label: "Votes",       icon: Vote },
   { href: "/automations",label: "Automations", icon: Zap },
-  { href: "/analytics",  label: "Analytics",   icon: BarChart3 },
 ]
 
-export function AppSidebar({ workspace }: { workspace: { slug: string; name: string; plan: string } }) {
+export function AppSidebar({ workspace }: { workspace: { slug: string; name: string } }) {
   const pathname = usePathname()
   const base = `/${workspace.slug}`
 
@@ -28,7 +27,6 @@ export function AppSidebar({ workspace }: { workspace: { slug: string; name: str
           <Logo className="h-5 w-5 text-gold" />
           <span className="font-display text-base font-semibold tracking-tight">{workspace.name}</span>
         </Link>
-        <div className="mt-1 text-xs text-text-muted capitalize">{workspace.plan} plan</div>
       </div>
       <nav className="flex-1 overflow-y-auto p-2">
         {NAV.map(({ href, label, icon: Icon }) => {
@@ -46,12 +44,6 @@ export function AppSidebar({ workspace }: { workspace: { slug: string; name: str
           )
         })}
       </nav>
-      <div className="border-t border-border p-3">
-        <Link href={`${base}/settings`}
-          className="flex items-center gap-2 rounded-sm px-2 py-2 text-sm text-text-muted hover:text-text hover:bg-bg">
-          <Settings className="h-4 w-4" /> Settings
-        </Link>
-      </div>
     </aside>
   )
 }

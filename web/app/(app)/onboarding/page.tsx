@@ -55,7 +55,7 @@ export default function OnboardingStep1() {
             className="w-full rounded-sm border border-border bg-surface px-3 py-3 text-base focus:border-gold"
           />
           <div className="text-xs text-text-muted">
-            URL: <span className="font-mono text-gold">getmesh.dev/{slug}</span>
+            URL: <span className="font-mono text-gold">/{slug}</span>
           </div>
           {err && <div className="rounded-sm border border-red bg-red/10 px-3 py-2 text-xs text-red">{err}</div>}
           <button type="submit" disabled={busy || !name}

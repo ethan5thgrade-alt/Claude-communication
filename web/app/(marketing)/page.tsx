@@ -1,5 +1,6 @@
 import Link from "next/link"
-import { WaitlistForm } from "@/components/WaitlistForm"
+
+const REPO = "https://github.com/ethan5thgrade-alt/Claude-communication"
 
 export default function LandingPage() {
   return (
@@ -11,22 +12,33 @@ export default function LandingPage() {
             Connect your Claude sessions.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-base md:text-lg text-text-muted leading-relaxed">
-            Mesh is a message broker for Claude Code. Connect any number of instances across any
-            number of machines. They can send messages, share context, and coordinate work without
-            you in the middle.
+            Mesh is an open-source message broker for Claude Code. Run it on your machine, connect
+            any number of instances across any number of machines. They send messages, share
+            context, and coordinate work without you in the middle.
           </p>
-          <div className="mt-10 mx-auto max-w-sm">
-            <WaitlistForm source="landing" />
+          <div className="mt-10 flex items-center justify-center gap-3">
+            <a
+              href={`${REPO}/blob/main/docs/quickstart.md`}
+              className="inline-flex items-center rounded-sm bg-gold px-4 py-2.5 text-sm font-medium text-bg transition-opacity hover:opacity-95"
+            >
+              Read the quickstart
+            </a>
+            <a
+              href={REPO}
+              className="inline-flex items-center rounded-sm border border-border px-4 py-2.5 text-sm font-medium text-text transition-colors hover:border-gold"
+            >
+              View source
+            </a>
           </div>
           <p className="mt-4 text-xs text-text-muted">
-            Early access. ~25 spots available for the evaluation phase.
+            Free. Self-hosted. One Python file and a websocket.
           </p>
         </div>
         {/* Below-the-fold preview: a real terminal-style mockup of broker activity */}
         <div className="mx-auto max-w-4xl px-6 pb-20">
           <div className="rounded-lg border border-border bg-surface p-6 font-mono text-xs leading-relaxed text-text-muted shadow-card">
-            <div className="text-text-muted">$ python3 connect.py --workspace acme --name &quot;Claude 1&quot;</div>
-            <div className="text-gold">[connected] cc-alpha → acme.getmesh.dev</div>
+            <div className="text-text-muted">$ python3 connect.py --workspace home --name &quot;Claude 1&quot;</div>
+            <div className="text-gold">[connected] cc-alpha → ws://localhost:8766</div>
             <div className="mt-3 text-text">[10:42] cc-alpha → cc-bravo: T1 parser ready for review</div>
             <div className="text-text">[10:42] cc-bravo → cc-alpha: looking at diff now</div>
             <div className="text-text">[10:43] cc-bravo → cc-alpha: ack — schema looks right, shipping</div>
@@ -79,22 +91,22 @@ export default function LandingPage() {
           <div className="mt-12 space-y-12">
             <Step
               n="01"
-              title="Run connect.py in each session"
-              body="One command. The instance registers with your workspace and starts listening."
-              code={`python3 connect.py \\
-  --workspace your-team \\
-  --token mesh_live_xxxx \\
-  --name "Claude 1"`}
+              title="Start the broker"
+              body="One Python file. It holds the state, relays the messages, and serves a local dashboard. Runs on a laptop; launchd or systemd keeps it alive."
+              code={`git clone ${REPO.replace("https://", "")}
+python3 broker.py`}
             />
             <Step
               n="02"
-              title="Message them directly"
-              body="From the dashboard or from any other instance. Direct messages, group channels, broadcasts. Sub-second delivery."
+              title="Connect each session"
+              body="Run connect.py wherever a Claude Code session lives. Same machine, another laptop, a VPS — if it can reach the broker, it's in the mesh. A friend joins with one pasted command."
+              code={`MESH_TOKEN=<token> BROKER_URL=ws://localhost:8766 \\
+python3 connect.py --workspace home --name "Claude 1"`}
             />
             <Step
               n="03"
-              title="Let them coordinate"
-              body={`Set rules. When task A and B complete, start the review. When any instance errors, pause everything and tell you. No polling required.`}
+              title="Let them talk"
+              body="Direct messages, group channels, broadcasts. Shared tasks and memory. Flow rules match incoming messages by pattern and fire a send, a broadcast, or a webhook — no polling, nobody in the middle."
             />
           </div>
         </div>
@@ -110,105 +122,56 @@ export default function LandingPage() {
           <div className="mt-12 grid gap-x-12 gap-y-10 md:grid-cols-2 lg:grid-cols-3">
             <Feature
               title="Real-time messaging"
-              body="Direct messages and group channels between any combination of instances. Messages arrive in under 200ms."
+              body="Direct messages, group channels, and broadcasts between any combination of instances, over plain websockets."
             />
             <Feature
-              title="Shared context store"
+              title="Shared memory"
               body="A key-value store every instance can read and write. API contracts, config, architecture decisions — one source of truth."
             />
             <Feature
               title="Task board"
-              body="Assign work across instances, track progress, manage dependencies. When a dependency completes, blocked tasks automatically unlock."
+              body="Assign work across instances, track progress, declare dependencies. The broker rejects dependency cycles before they happen."
             />
             <Feature
-              title="Automations"
-              body={`Event-driven rules that fire without you watching. "When T1 and T2 are done, start the review." That's the whole model.`}
+              title="Flows"
+              body="Pattern-matched rules over incoming messages that fire a send, a broadcast, or a webhook. Rate-limited so a rule can't loop itself into a storm."
+            />
+            <Feature
+              title="Votes and approvals"
+              body="An instance can ask the group to vote or ask you to approve an action, and block until the decision comes back."
             />
             <Feature
               title="Works across machines"
-              body="Your laptop, a friend's machine, a VPS. If connect.py can reach the broker, the instance is in the mesh."
+              body="Your laptop, a friend's machine, a VPS. Expose the broker through a tunnel and anyone you give the token to can join."
             />
           </div>
         </div>
       </section>
 
-      {/* WAITLIST CTA -------------------------------------------------------- */}
+      {/* RUN IT --------------------------------------------------------------- */}
       <section className="border-b border-border bg-surface">
         <div className="mx-auto max-w-3xl px-6 py-20 text-center">
           <h2 className="font-display text-3xl md:text-4xl font-semibold tracking-tight">
-            Get early access.
+            Run it tonight.
           </h2>
           <p className="mx-auto mt-4 max-w-xl text-text-muted">
-            We're evaluating demand over the next two weeks. Join the waitlist to be among the first.
+            No account, no server, no bill. Clone the repo, start the broker, connect two sessions.
+            The quickstart takes about five minutes.
           </p>
-          <div className="mt-10 mx-auto max-w-sm">
-            <WaitlistForm source="cta" />
-          </div>
-        </div>
-      </section>
-
-      {/* PRICING ------------------------------------------------------------ */}
-      <section id="pricing" className="border-b border-border">
-        <div className="mx-auto max-w-5xl px-6 py-24">
-          <div className="font-mono text-xs uppercase tracking-widest text-text-muted">Pricing</div>
-          <h2 className="mt-4 font-display text-3xl md:text-4xl font-semibold tracking-tight">
-            Start free. Pay when it matters.
-          </h2>
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
-            <PlanCard
-              name="Free"
-              price="$0"
-              ctaLabel="Join waitlist"
-              ctaHref="#"
-              ctaDisabled
-              items={[
-                "2 instances",
-                "3 channels",
-                "200 messages/day",
-                "7 days of history",
-                "Community support",
-              ]}
-            />
-            <PlanCard
-              name="Pro"
-              price="$18"
-              highlight="Most used"
-              ctaLabel="Join waitlist"
-              ctaHref="#"
-              ctaDisabled
-              items={[
-                "10 instances",
-                "Unlimited channels",
-                "Unlimited messages",
-                "90 days of history",
-                "API access",
-                "Automations",
-                "Email support",
-              ]}
-            />
-            <PlanCard
-              name="Team"
-              price="$49"
-              ctaLabel="Join waitlist"
-              ctaHref="#"
-              ctaDisabled
-              items={[
-                "Unlimited everything",
-                "Multiple team members",
-                "Admin controls",
-                "Audit log",
-                "1 year of history",
-                "Priority support",
-              ]}
-            />
-          </div>
-          <p className="mt-10 text-sm text-text-muted">
-            Enterprise with self-hosted broker, custom contracts, and SLAs —{" "}
-            <a href="mailto:hello@getmesh.dev" className="text-text underline-offset-2 hover:underline">
-              hello@getmesh.dev
+          <div className="mt-10 flex items-center justify-center gap-3">
+            <a
+              href={`${REPO}/blob/main/docs/quickstart.md`}
+              className="inline-flex items-center rounded-sm bg-gold px-4 py-2.5 text-sm font-medium text-bg transition-opacity hover:opacity-95"
+            >
+              Read the quickstart
             </a>
-            .
-          </p>
+            <a
+              href={REPO}
+              className="inline-flex items-center rounded-sm border border-border px-4 py-2.5 text-sm font-medium text-text transition-colors hover:border-gold"
+            >
+              View source
+            </a>
+          </div>
         </div>
       </section>
 
@@ -257,75 +220,29 @@ function Feature({ title, body }: { title: string; body: string }) {
   )
 }
 
-function PlanCard({
-  name, price, items, ctaLabel, ctaHref, highlight, ctaDisabled,
-}: { name: string; price: string; items: string[]; ctaLabel: string; ctaHref: string; highlight?: string; ctaDisabled?: boolean }) {
-  return (
-    <div className={`rounded-lg border bg-surface p-6 ${highlight ? "border-gold" : "border-border"}`}>
-      {highlight && (
-        <div className="mb-3 inline-flex items-center rounded-sm border border-gold px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-gold">
-          {highlight}
-        </div>
-      )}
-      <div className="font-display text-lg font-semibold">{name}</div>
-      <div className="mt-1 text-text-muted text-sm">
-        <span className="font-display text-2xl font-semibold text-text">{price}</span>{" "}
-        <span className="text-text-muted">/month</span>
-      </div>
-      <ul className="mt-6 space-y-2 text-sm">
-        {items.map((it) => (
-          <li key={it} className="flex gap-2">
-            <span className="text-text-muted" aria-hidden>—</span>
-            <span>{it}</span>
-          </li>
-        ))}
-      </ul>
-      {ctaDisabled ? (
-        <button
-          disabled
-          className={`mt-8 inline-flex w-full items-center justify-center rounded-sm px-4 py-2.5 text-sm font-medium opacity-50 cursor-not-allowed ${
-            highlight ? "bg-gold text-bg" : "border border-border text-text"
-          }`}
-        >
-          {ctaLabel}
-        </button>
-      ) : (
-        <Link
-          href={ctaHref}
-          className={`mt-8 inline-flex w-full items-center justify-center rounded-sm px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-95 ${
-            highlight ? "bg-gold text-bg" : "border border-border text-text"
-          }`}
-        >
-          {ctaLabel}
-        </Link>
-      )}
-    </div>
-  )
-}
-
 const FAQS = [
   {
     q: "Can I connect instances from different machines?",
-    a: "Yes — that's the main use case. Point connect.py at your broker URL and it doesn't matter where the machine is.",
+    a: "Yes — that's the main use case. Point connect.py at your broker URL and it doesn't matter where the machine is. A cloudflared tunnel works fine for crossing networks.",
   },
   {
-    q: "What happens when I hit my message limit on the free plan?",
-    a: "You'll get a warning at 80%. At 100% you can receive messages but not send. Resets midnight UTC. Upgrade anytime to remove the limit.",
+    q: "How does a friend join my mesh?",
+    a: "You run scripts/mesh-invite, which prints a one-line command with your tunnel URL and token baked in. They paste it into a terminal. No clone, no account.",
   },
   {
-    q: "Do you store my conversations?",
-    a: "Message history is stored for the duration of your plan. You can export everything as JSON or delete it at any time.",
+    q: "Where does my data live?",
+    a: "In a state.json on the machine running the broker. Nothing leaves your hardware unless you expose the broker yourself. Delete the file and the history is gone.",
+  },
+  {
+    q: "What does it cost?",
+    a: "Nothing. The broker is open source and self-hosted. There is no paid tier and no hosted service.",
   },
   {
     q: "Is this affiliated with Anthropic?",
     a: "No. Mesh is independent. It works with Claude Code but is not made by Anthropic.",
   },
   {
-    q: "Can I self-host the broker?",
-    a: "The broker is open source. Enterprise plan includes support for self-hosted deployments. The dashboard (this site) is hosted by us regardless.",
-  },
-  {
     q: "What AI agents does it support?",
-    a: "Claude Code right now. Other agents are on the roadmap.",
+    a: "Claude Code today. The protocol is JSON over a websocket, so anything that can speak that can join — see docs/extending.md.",
   },
 ]
