@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#0A0A0A" />
 <title>AGENT MESH</title>
 <script>
@@ -24,9 +24,6 @@
     }
   })();
 </script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   /* ---------- Design tokens (startup-product vibe) ---------- */
   /* Dark base, but warmer charcoal instead of pure black; electric-violet
@@ -244,34 +241,6 @@
     box-shadow: 0 0 0 4px var(--gold-tint), var(--shadow-pop);
     border-bottom: none !important;
   }
-  /* Advanced-tabs toggle — proper bordered pill */
-  .tab-btn.adv-toggle {
-    padding: 6px 10px; margin: 10px 6px;
-    color: var(--dim); font-size: 14px; line-height: 1;
-    letter-spacing: 0;
-    border: 1px solid var(--border) !important;
-    border-bottom: 1px solid var(--border) !important;
-    border-radius: var(--radius-sm) !important;
-    background: var(--surface-2);
-    transition: color 0.15s ease, border-color 0.15s ease, box-shadow 0.18s ease;
-  }
-  .tab-btn.adv-toggle:hover {
-    color: var(--body);
-    border-color: var(--gold) !important;
-    box-shadow: 0 0 0 3px var(--gold-tint);
-  }
-  .tab-btn.adv-toggle:focus-visible {
-    outline: none;
-    color: var(--body);
-    border-color: var(--gold) !important;
-    box-shadow: 0 0 0 3px var(--gold-tint);
-  }
-  body:not(.show-adv) .tab-btn.adv-tab { display: none; }
-  body.show-adv .tab-btn.adv-toggle {
-    color: var(--gold);
-    border-color: var(--gold) !important;
-    background: var(--gold-tint);
-  }
   /* Tabs with animated gradient underline (replaces solid 2px border) */
   .tab-btn {
     border: none; border-bottom: none;
@@ -298,8 +267,7 @@
   }
   .tab-btn.active { color: var(--gold); }
   .tab-btn.active::after { transform: scaleX(1); opacity: 1; }
-  .tab-btn.invite-cta::after,
-  .tab-btn.adv-toggle::after { content: none; }
+  .tab-btn.invite-cta::after { content: none; }
   .tab-badge {
     display: inline-block; min-width: 14px; height: 14px;
     padding: 0 4px; border-radius: 7px;
@@ -736,109 +704,6 @@
     text-align: center; text-transform: uppercase;
   }
 
-  /* ===== TASKS TAB ===== */
-  #pane-tasks { padding: 12px; overflow: hidden; flex-direction: column; }
-  #tasks-filterbar {
-    display: inline-flex; align-items: center; gap: 4px;
-    margin-bottom: 12px; padding: 4px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 999px; box-shadow: var(--shadow-card);
-    font-size: 10px; letter-spacing: 0.4px; color: var(--dim);
-    width: max-content; max-width: 100%; flex-wrap: wrap;
-  }
-  #tasks-filterbar > span:first-child {
-    padding: 0 10px; font-size: 9px; letter-spacing: 1.5px;
-    text-transform: uppercase; color: var(--dim);
-  }
-  #tasks-filterbar button {
-    padding: 6px 14px; border-radius: 999px;
-    background: transparent; border: 1px solid transparent;
-    font-size: 10px; letter-spacing: 0.3px; color: var(--body);
-    text-transform: none; transition: all 120ms ease;
-  }
-  #tasks-filterbar button:hover { color: var(--gold); }
-  #tasks-filterbar button.active {
-    background: var(--gold); color: var(--on-accent);
-    border-color: var(--gold); font-weight: 600;
-  }
-  #kanban {
-    flex: 1; display: grid;
-    grid-template-columns: repeat(4, 1fr); gap: 14px;
-    min-height: 0; overflow: hidden;
-  }
-  .col {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-card);
-    display: flex; flex-direction: column;
-    min-height: 0; overflow: hidden;
-  }
-  .col-head {
-    padding: 12px 14px 10px;
-    font-size: 12px; letter-spacing: 0.2px;
-    color: var(--body); text-transform: none; font-weight: 600;
-    border-bottom: none;
-    display: flex; align-items: center; justify-content: space-between;
-    background: transparent;
-  }
-  .col-head [id^="cnt-"] {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 22px; height: 20px; padding: 0 7px;
-    background: var(--surface-2); color: var(--dim);
-    border-radius: 999px; font-size: 10px; font-weight: 600;
-    letter-spacing: 0; border: 1px solid var(--border);
-  }
-  .col-body {
-    flex: 1; overflow-y: auto; padding: 4px 10px 12px;
-    display: flex; flex-direction: column; gap: 10px;
-    min-height: 0;
-    background: transparent;
-  }
-  .col-body.drag-over {
-    background: rgba(139, 124, 255, 0.06);
-    outline: 1px dashed var(--gold); outline-offset: -4px;
-    border-radius: var(--radius);
-  }
-  .task-card {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 12px 12px 12px 18px;
-    cursor: grab; position: relative;
-    box-shadow: var(--shadow-card);
-    animation: fadeUp 200ms ease-out;
-    transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
-  }
-  .task-card::before {
-    content: ""; position: absolute;
-    left: 6px; top: 14px;
-    width: 4px; height: 14px;
-    background-image: radial-gradient(var(--dim) 1px, transparent 1px);
-    background-size: 4px 4px;
-    opacity: 0.5;
-  }
-  .task-card:hover {
-    border-color: var(--gold);
-    transform: translateY(-1px);
-  }
-  .task-card:active { cursor: grabbing; }
-  .task-card.blocked { border-color: var(--red); }
-  .task-card.blocked::after {
-    content: ""; position: absolute; top: 0; left: 0;
-    width: 3px; height: 100%; background: var(--red);
-    border-top-left-radius: var(--radius);
-    border-bottom-left-radius: var(--radius);
-  }
-  .tc-title {
-    font-size: 13px; font-weight: 600;
-    margin-bottom: 8px; line-height: 1.35;
-    color: var(--body); letter-spacing: 0;
-  }
-  .tc-meta {
-    display: flex; flex-wrap: wrap; align-items: center;
-    gap: 6px; margin-bottom: 6px;
-  }
   .pill {
     display: inline-flex; align-items: center;
     padding: 2px 8px; border-radius: 999px;
@@ -846,258 +711,8 @@
     border: 1px solid var(--border);
     text-transform: none; font-weight: 500;
   }
-  .tc-meta .pill.priority-high,
-  .tc-meta .pill.priority-medium,
-  .tc-meta .pill.priority-low {
-    padding: 0; border: none; background: transparent;
-    width: 8px; height: 8px; border-radius: 50%;
-    font-size: 0; color: transparent; overflow: hidden;
-  }
-  .tc-meta .pill.priority-high { background: var(--red); }
-  .tc-meta .pill.priority-medium { background: var(--gold); }
-  .tc-meta .pill.priority-low { background: var(--green); }
-  .pill.blocked { color: var(--red); border-color: var(--red); background: rgba(255,107,122,0.10); }
-  .tc-meta .pill.agent {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 2px 8px 2px 4px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 999px; font-size: 9px; font-weight: 600;
-    letter-spacing: 0.3px; text-transform: none; color: var(--body);
-  }
-  .tc-meta .pill.agent::before {
-    content: ""; width: 16px; height: 16px; border-radius: 50%;
-    background: var(--gold); color: var(--on-accent);
-    display: inline-block;
-  }
-  .tc-deps {
-    font-size: 9px; color: var(--dim); letter-spacing: 0.4px;
-    margin-bottom: 6px; opacity: 0.75; text-transform: none;
-  }
-  .tc-progress { margin-top: 8px; }
-  .tc-moves { display: flex; gap: 4px; margin-top: 10px; }
-  .tc-moves button {
-    flex: 1; padding: 5px; border-radius: var(--radius-sm);
-    background: var(--surface); font-size: 10px;
-    border: 1px solid var(--border); color: var(--dim);
-    transition: all 120ms ease;
-  }
-  .tc-moves button:hover {
-    color: var(--on-accent); background: var(--gold); border-color: var(--gold);
-  }
-  .tc-detail {
-    margin-top: 10px; padding-top: 10px;
-    border-top: 1px solid var(--border);
-    font-size: 10px;
-  }
-  .tc-detail .label {
-    font-size: 7px; letter-spacing: 2px; color: var(--dim);
-    text-transform: uppercase; margin-top: 8px; margin-bottom: 4px;
-  }
-  .tc-detail textarea { width: 100%; min-height: 50px; font-size: 10px; }
-  .tc-detail button {
-    margin-top: 6px; padding: 4px 10px; border-radius: 4px;
-    background: var(--surface); font-size: 9px; letter-spacing: 1px;
-  }
-  .tc-detail .danger { color: var(--red); }
-  .tc-detail .danger:hover { background: var(--red); color: var(--on-accent); border-color: var(--red); }
-  #create-task-form {
-    background: var(--surface);
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 12px; margin-bottom: 10px;
-    display: flex; flex-direction: column; gap: 8px;
-    transition: border-color 140ms ease, background 140ms ease;
-  }
-  #create-task-form:focus-within {
-    border-color: var(--gold); border-style: solid;
-    background: var(--surface-2);
-  }
-  #create-task-form input,
-  #create-task-form select,
-  #create-task-form textarea {
-    width: 100%; font-size: 12px; padding: 8px 10px;
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); color: var(--body);
-  }
-  #create-task-form input::placeholder,
-  #create-task-form textarea::placeholder { color: var(--dim); }
-  #create-task-form input:focus,
-  #create-task-form select:focus,
-  #create-task-form textarea:focus {
-    border-color: var(--gold); outline: none;
-  }
-  #create-task-form .row { display: flex; gap: 8px; }
-  #create-task-form .row > * { flex: 1; }
-  #create-task-form button {
-    background: var(--gold); color: var(--on-accent);
-    border: 1px solid var(--gold);
-    padding: 8px 14px; font-size: 11px; letter-spacing: 0.5px;
-    font-weight: 600; border-radius: var(--radius-sm);
-    align-self: flex-start; text-transform: none;
-    transition: filter 120ms ease, transform 120ms ease;
-  }
-  #create-task-form button:hover { filter: brightness(1.1); transform: translateY(-1px); }
 
-  /* ===== FLOWS TAB ===== */
-  #pane-flows { padding: 12px; overflow-y: auto; flex-direction: column; }
-  .section-head {
-    font-size: 9px; letter-spacing: 2px; color: var(--dim);
-    text-transform: uppercase; margin: 8px 0 8px;
-    display: flex; align-items: center; gap: 8px;
-  }
-  .section-head .toggle {
-    margin-left: auto; padding: 2px 8px; border-radius: 4px;
-    background: var(--surface-2); font-size: 8px; color: var(--dim);
-  }
-  #flow-templates { margin-bottom: 16px; }
-  #flow-templates.collapsed .templates-grid { display: none; }
-  .templates-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-    gap: 8px;
-  }
-  .template-card {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 10px; cursor: pointer;
-    font-size: 9px; letter-spacing: 0.5px;
-  }
-  .template-card:hover { border-color: var(--gold); }
-  .template-card b { display: block; font-size: 10px; margin-bottom: 4px; }
-  #flow-form {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 10px;
-    display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;
-  }
-  #flow-form .row { display: flex; gap: 6px; align-items: center; }
-  #flow-form input, #flow-form textarea { width: 100%; font-size: 10px; }
-  #flow-form button.submit {
-    background: var(--gold); color: var(--on-accent); border-color: var(--gold);
-    padding: 6px; font-size: 9px; letter-spacing: 1.5px; font-weight: 700;
-    border-radius: 4px;
-  }
-  .swatches { display: flex; gap: 6px; }
-  .swatch {
-    width: 20px; height: 20px; border-radius: 50%;
-    border: 2px solid var(--border); cursor: pointer;
-  }
-  .swatch.selected { border-color: var(--body); }
-  .flow-row {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 10px; margin-bottom: 6px;
-    display: flex; align-items: center; gap: 10px;
-    transition: border-color 250ms;
-  }
-  .flow-row.fired {
-    border-color: var(--gold);
-    animation: glowPulse 700ms ease-out;
-  }
-  .flow-color { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 14px; }
-  .flow-info { flex: 1; min-width: 0; }
-  .flow-name { font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-bottom: 4px; }
-  .flow-detail { font-size: 9px; color: var(--dim); margin-bottom: 2px; }
-  .flow-actions { display: flex; gap: 6px; flex: 0 0 auto; }
-  .flow-actions button {
-    padding: 4px 8px; border-radius: 4px;
-    background: var(--surface); font-size: 8px; letter-spacing: 1px;
-  }
-  .flow-toggle {
-    width: 30px; height: 16px; border-radius: 8px;
-    background: var(--muted); position: relative; cursor: pointer;
-    flex: 0 0 30px;
-  }
-  .flow-toggle::after {
-    content: ''; position: absolute; top: 2px; left: 2px;
-    width: 12px; height: 12px; border-radius: 50%;
-    background: var(--dim); transition: all 150ms;
-  }
-  .flow-toggle.on { background: rgba(126,200,164,0.2); }
-  .flow-toggle.on::after { left: 16px; background: var(--green); }
-
-  /* ===== MEMORY TAB ===== */
-  #pane-memory { padding: 12px; overflow-y: auto; flex-direction: column; }
-  #mem-form {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 10px;
-    display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px;
-  }
-  #mem-form .row { display: flex; gap: 6px; flex-wrap: wrap; }
-  #mem-form input { flex: 1; font-size: 10px; }
-  #mem-form textarea { width: 100%; font-size: 10px; min-height: 60px; }
-  #mem-types { display: flex; flex-wrap: wrap; gap: 4px; }
-  .type-pill {
-    padding: 4px 10px; border-radius: 20px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--surface);
-    font-size: 8px; letter-spacing: 1px; text-transform: uppercase;
-  }
-  .type-pill.selected, .type-pill.active { border-width: 1px; }
-  .type-pill[data-type="contract"].selected { background: var(--blue); color: var(--on-accent); border-color: var(--blue); }
-  .type-pill[data-type="config"].selected { background: var(--green); color: var(--on-accent); border-color: var(--green); }
-  .type-pill[data-type="design"].selected { background: var(--purple); color: var(--on-accent); border-color: var(--purple); }
-  .type-pill[data-type="decision"].selected { background: var(--gold); color: var(--on-accent); border-color: var(--gold); }
-  .type-pill[data-type="error"].selected { background: var(--red); color: var(--on-accent); border-color: var(--red); }
-  .type-pill[data-type="pattern"].selected { background: var(--teal); color: var(--on-accent); border-color: var(--teal); }
-  #mem-form button.submit {
-    background: var(--gold); color: var(--on-accent); border-color: var(--gold);
-    padding: 6px 12px; font-size: 9px; letter-spacing: 1.5px; font-weight: 700;
-    border-radius: 4px; align-self: flex-start;
-  }
-  #mem-filters { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
-  #mem-filters .type-pill.active {
-    background: var(--surface-2); color: var(--gold); border-color: var(--gold);
-  }
-  .mem-entry {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--muted);
-    border-radius: var(--radius);
-    padding: 12px 14px; margin-bottom: 10px;
-    box-shadow: var(--shadow-card);
-    transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
-  }
-  .mem-entry:hover {
-    background: var(--surface);
-    border-color: var(--gold);
-    transform: translateY(-1px);
-  }
-  .mem-entry.contract { border-left-color: var(--blue); }
-  .mem-entry.config   { border-left-color: var(--green); }
-  .mem-entry.design   { border-left-color: var(--purple); }
-  .mem-entry.decision { border-left-color: var(--gold); }
-  .mem-entry.error    { border-left-color: var(--red); }
-  .mem-entry.pattern  { border-left-color: var(--teal); }
-  .me-head {
-    display: flex; align-items: center; gap: 8px;
-    margin-bottom: 6px; flex-wrap: wrap;
-  }
-  .me-key {
-    font-family: var(--font-mono);
-    font-size: 12px; font-weight: 600; letter-spacing: 0;
-    color: var(--gold);
-  }
-  .me-head .type-pill,
-  .me-head .pill {
-    padding: 2px 8px; font-size: 9px; letter-spacing: 0.5px;
-    border-radius: 999px; text-transform: lowercase;
-    background: var(--surface); border: 1px solid var(--border);
-    color: var(--dim);
-  }
-  .me-value {
-    font-size: 13px; white-space: pre-wrap; word-break: break-word;
-    color: var(--body); padding: 4px 0 6px;
-    line-height: 1.5; font-family: inherit;
-  }
-  .me-foot {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 10px; color: var(--dim); letter-spacing: 0;
-    margin-top: 6px; opacity: 0.8;
-  }
-  .me-foot button {
-    padding: 4px 10px; border-radius: var(--radius-sm);
-    background: var(--surface); font-size: 10px;
-    border: 1px solid var(--border); color: var(--dim);
-  }
-  .me-foot button:hover { color: var(--gold); border-color: var(--gold); }
-
-  /* ===== CONTROL TAB ===== */
+  /* ===== CONTROL TAB (AUDIT only) ===== */
   #pane-control { flex-direction: column; padding: 0; overflow: hidden; }
   #ctl-tabs {
     flex: 0 0 auto; display: flex; border-bottom: 1px solid var(--border);
@@ -1113,56 +728,6 @@
   #ctl-content { flex: 1; overflow-y: auto; padding: 12px; }
   .ctl-pane { display: none; }
   .ctl-pane.active { display: block; }
-  .approval-card, .vote-card, .role-card {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 4px; padding: 12px; margin-bottom: 8px;
-  }
-  .ap-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-  .ap-action { font-size: 12px; margin-bottom: 6px; }
-  .ap-detail { font-size: 10px; color: var(--dim); margin-bottom: 10px; line-height: 1.4; }
-  .ap-buttons { display: flex; gap: 6px; }
-  .ap-buttons button {
-    padding: 6px 14px; border-radius: 4px; font-size: 9px;
-    letter-spacing: 1.5px; font-weight: 700;
-  }
-  .ap-buttons .approve { background: var(--green); color: var(--on-accent); border-color: var(--green); }
-  .ap-buttons .reject { background: var(--red); color: var(--on-accent); border-color: var(--red); }
-  .approval-card.resolved { opacity: 0.5; }
-  .risk-low { color: var(--green); border-color: var(--green); }
-  .risk-medium { color: var(--gold); border-color: var(--gold); }
-  .risk-high { color: var(--red); border-color: var(--red); }
-  .vote-q { font-size: 12px; font-weight: 700; margin-bottom: 10px; }
-  .vote-option {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 4px; padding: 8px 10px; margin-bottom: 6px;
-    cursor: pointer; position: relative; overflow: hidden;
-  }
-  .vote-option:hover { border-color: var(--dim); }
-  .vote-option.leading { border-color: var(--gold); }
-  .vote-option .vo-fill {
-    position: absolute; top: 0; left: 0; bottom: 0;
-    background: rgba(201,168,76,0.08); transition: width 250ms;
-  }
-  .vote-option.leading .vo-fill { background: rgba(201,168,76,0.18); }
-  .vo-content {
-    position: relative; display: flex; align-items: center;
-    justify-content: space-between; gap: 8px;
-  }
-  .vo-label { font-size: 11px; }
-  .vo-right { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--dim); }
-  .vote-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    display: inline-block;
-  }
-  .role-card { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .role-card .name { font-size: 11px; font-weight: 700; flex: 0 0 80px; }
-  .role-card select { font-size: 10px; flex: 0 0 130px; }
-  .role-card .task { flex: 1; font-size: 10px; color: var(--dim); min-width: 100px;
-                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .role-card .toggle-btn { padding: 5px 10px; border-radius: 4px;
-                           background: var(--surface); font-size: 9px; letter-spacing: 1px; }
-  .role-card .toggle-btn.paused { color: var(--red); border-color: var(--red); }
-  .role-card .wl { flex: 0 0 80px; }
   .audit-bar {
     display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
     font-size: 9px; color: var(--dim);
@@ -1313,22 +878,18 @@
     #conv-list { flex: 1 1 auto; width: 100%; border-right: none; }
     #chat-main { flex: 1 1 auto; width: 100%; }
     #pane-chat.show-thread #conv-list { display: none; }
-    #pane-chat:not(.show-thread) #chat-main { display: none; }
+    /* With a thread open, hide the list and show the thread. With NO thread
+       selected, show the conversation list AND the welcome empty-state stacked
+       so phone users get the same "get two Claudes talking" guide. */
+    #pane-chat:not(.show-thread) #chat-thread,
+    #pane-chat:not(.show-thread) #compose { display: none; }
+    #pane-chat:not(.show-thread) #chat-main { display: flex; flex: 0 0 auto; }
+    #pane-chat:not(.show-thread) #chat-header { display: none; }
     #chat-header .back-btn {
       display: inline-flex; align-items: center; justify-content: center;
       padding: 4px 10px; border-radius: 4px; background: var(--surface-2);
       font-size: 10px; color: var(--body);
     }
-
-    /* Tasks: scroll horizontally */
-    #kanban {
-      grid-template-columns: repeat(4, 280px);
-      overflow-x: auto;
-    }
-  }
-  @media (max-width: 480px) {
-    #kanban { grid-template-columns: repeat(4, 240px); }
-    .templates-grid { grid-template-columns: 1fr 1fr; }
   }
 
   /* ===== CHAT — sections, groups ===== */
@@ -1423,7 +984,7 @@
   }
   .connect-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 18px;
     max-width: 1200px;
     margin: 0 auto;
@@ -1509,27 +1070,13 @@
     border: 1px solid var(--border); font-family: var(--font-mono);
     font-size: 11.5px; color: var(--gold-bright);
   }
-  .cc-qr-wrap {
-    display: flex; flex-direction: column; align-items: center;
-    gap: 14px; padding: 8px 0 4px;
-  }
-  #connect-qr {
-    width: 240px; height: 240px;
-    background: #fff; border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    padding: 12px;
-    border: 1px solid var(--gold);
-    box-shadow:
-      0 0 0 6px var(--gold-tint),
-      0 14px 38px rgba(139,124,255,0.28),
-      0 2px 8px rgba(0,0,0,0.35);
-    position: relative;
-  }
-  #connect-qr img { width: 100%; height: 100%; image-rendering: pixelated; }
-  #connect-qr .qr-skel { color: #888; font-size: 11px; letter-spacing: 1px; }
-  .cc-qr-caption {
-    font-size: 12px; color: var(--dim); text-align: center;
-    max-width: 260px; line-height: 1.5;
+  #connect-invite-cmd {
+    font-family: var(--font-mono); font-size: 13px;
+    color: var(--gold-bright);
+    background: var(--surface-2); border: 1px solid var(--gold);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+    box-shadow: 0 0 0 4px var(--gold-tint);
+    white-space: pre-wrap; word-break: break-word;
   }
   .cc-steps { display: flex; flex-direction: column; gap: 12px; }
   .cc-step {
@@ -1601,24 +1148,14 @@
       </div>
     </div>
     <div class="h-tabs">
-      <!-- Primary tabs (always shown). INVITE moved up from CONNECT so new
-           users see how to bring in a friend BEFORE the advanced surface. -->
+      <!-- INVITE sits next to CHAT so new users see how to bring in a friend. -->
       <button class="tab-btn active" data-tab="chat">CHAT<span class="tab-badge" id="badge-chat" style="display:none"></span></button>
-      <button class="tab-btn invite-cta" data-tab="connect">+ INVITE<span class="tab-badge" id="badge-connect" style="display:none"></span></button>
-      <button class="tab-btn" data-tab="tasks">TASKS<span class="tab-badge" id="badge-tasks" style="display:none"></span></button>
-      <button class="tab-btn" data-tab="memory">MEMORY<span class="tab-badge" id="badge-memory" style="display:none"></span></button>
-      <!-- Advanced tabs hidden by default; revealed by the ··· toggle below.
-           Choice persists in localStorage so power users opt in once. -->
-      <button class="tab-btn adv-tab" data-tab="flows">FLOWS<span class="tab-badge" id="badge-flows" style="display:none"></span></button>
-      <button class="tab-btn adv-tab" data-tab="plugins">PLUGINS<span class="tab-badge" id="badge-plugins" style="display:none"></span></button>
-      <button class="tab-btn adv-tab" data-tab="control">CONTROL<span class="tab-badge" id="badge-control" style="display:none"></span></button>
-      <button class="tab-btn adv-toggle" id="adv-toggle" title="Show/hide advanced tabs">···</button>
+      <button class="tab-btn invite-cta" data-tab="connect">+ INVITE</button>
+      <button class="tab-btn" data-tab="control">AUDIT</button>
     </div>
     <div class="h-right">
       <button class="h-action" id="btn-theme" title="Toggle dark/light theme" aria-label="Toggle theme">&#x263E;<span class="lbl" id="theme-lbl"> DARK</span></button>
       <button class="h-action gold" id="btn-broadcast" title="Broadcast to all">&#x2295;<span class="lbl"> ALL</span></button>
-      <button class="h-action red" id="btn-stop" title="Emergency stop">&#x23F9;<span class="lbl"> STOP</span></button>
-      <button class="h-action green" id="btn-resume" title="Resume all">&#x25B6;<span class="lbl"> RESUME</span></button>
     </div>
   </header>
 
@@ -1663,7 +1200,7 @@
                     <div class="ws-text">They run this on <em>their</em> machine:</div>
                     <pre class="ws-cmd" id="empty-cmd-friend">BROKER_URL=ws://… python3 connect.py</pre>
                     <div class="ws-text" style="margin-top:8px">
-                      Or scan the QR in the <b>CONNECT</b> tab → opens this dashboard on their phone.
+                      Or run <code>./scripts/mesh-invite</code> on the broker host for a one-paste invite. See the <b>+ INVITE</b> tab.
                     </div>
                   </div>
                 </li>
@@ -1703,119 +1240,27 @@
         </div>
       </div>
 
-      <!-- TASKS -->
-      <div class="tab-pane" id="pane-tasks">
-        <div id="tasks-filterbar">
-          <span>FILTER:</span>
-          <span id="tasks-filter-display">ALL</span>
-          <button id="tasks-clear-filter" style="display:none">CLEAR</button>
-        </div>
-        <div id="kanban">
-          <div class="col" data-col="backlog">
-            <div class="col-head"><span>BACKLOG</span><span id="cnt-backlog">0</span></div>
-            <div class="col-body" data-drop="backlog">
-              <form id="create-task-form" onsubmit="return false">
-                <input type="text" id="ct-title" placeholder="New task title…" />
-                <div class="row">
-                  <select id="ct-assignee"><option value="">— assignee —</option></select>
-                  <select id="ct-priority">
-                    <option value="low">LOW</option>
-                    <option value="medium" selected>MED</option>
-                    <option value="high">HIGH</option>
-                  </select>
-                </div>
-                <select id="ct-deps" multiple size="3" style="font-size:10px"></select>
-                <button id="ct-submit">CREATE</button>
-              </form>
-              <div id="col-backlog"></div>
-            </div>
-          </div>
-          <div class="col" data-col="in_progress">
-            <div class="col-head"><span>IN PROGRESS</span><span id="cnt-in_progress">0</span></div>
-            <div class="col-body" data-drop="in_progress"><div id="col-in_progress"></div></div>
-          </div>
-          <div class="col" data-col="review">
-            <div class="col-head"><span>REVIEW</span><span id="cnt-review">0</span></div>
-            <div class="col-body" data-drop="review"><div id="col-review"></div></div>
-          </div>
-          <div class="col" data-col="done">
-            <div class="col-head"><span>DONE</span><span id="cnt-done">0</span></div>
-            <div class="col-body" data-drop="done"><div id="col-done"></div></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- FLOWS -->
-      <div class="tab-pane" id="pane-flows">
-        <div id="flow-templates">
-          <div class="section-head">
-            TEMPLATES
-            <button class="toggle" id="tmpl-toggle">HIDE</button>
-          </div>
-          <div class="templates-grid" id="tmpl-grid"></div>
-        </div>
-        <div class="section-head">+ NEW FLOW</div>
-        <form id="flow-form" onsubmit="return false">
-          <input type="text" id="fl-name" placeholder="Flow name…" />
-          <textarea id="fl-trigger" pattern="r'\bdeploy\b'" placeholder="Trigger — regex pattern, e.g. r'\bdeploy\b'" rows="2"></textarea>
-          <div class="flow-hint" style="font-size:10px;color:var(--dim);margin:-4px 0 6px 2px;">trigger is a Python regex; action is <code>send &lt;to&gt; &lt;template&gt;</code>, <code>broadcast &lt;template&gt;</code>, or <code>webhook &lt;url&gt; &lt;template&gt;</code>. Template vars: <code>{from} {to} {text} {match.1}</code></div>
-          <textarea id="fl-action" placeholder="Action (e.g. send cc2 task {match.1} is ready)" rows="2"></textarea>
-          <div class="row">
-            <div class="swatches" id="fl-swatches"></div>
-          </div>
-          <button class="submit" id="fl-submit">CREATE FLOW</button>
-        </form>
-        <div class="section-head">ACTIVE FLOWS</div>
-        <div id="flow-list"></div>
-      </div>
-
-      <!-- MEMORY -->
-      <div class="tab-pane" id="pane-memory">
-        <div class="section-head">+ WRITE</div>
-        <form id="mem-form" onsubmit="return false">
-          <div class="row"><input type="text" id="mem-key" placeholder="KEY (e.g. SSE_FORMAT)" /></div>
-          <textarea id="mem-value" placeholder="VALUE"></textarea>
-          <div id="mem-types"></div>
-          <button class="submit" id="mem-submit">WRITE</button>
-        </form>
-        <div class="section-head">SHARED MEMORY</div>
-        <div id="mem-filters"></div>
-        <div id="mem-list"></div>
-      </div>
-
-      <!-- PLUGINS -->
-      <div class="tab-pane" id="pane-plugins">
-        <div class="section-head">
-          INSTALLED PLUGINS
-          <button class="toggle" id="plug-refresh">REFRESH</button>
-        </div>
-        <div id="plug-list" style="overflow:auto; flex:1; padding:8px 12px;"></div>
-      </div>
-
       <!-- CONNECT -->
       <div class="tab-pane" id="pane-connect">
         <div id="connect-wrap">
           <div class="connect-grid">
             <div class="connect-card">
               <div class="cc-head">
-                <span class="cc-title">SHARE THIS BROKER</span>
-                <span class="cc-sub">Send the URL + token to a teammate so their Claude Code can join</span>
+                <span class="cc-title">INVITE A FRIEND</span>
+                <span class="cc-sub">One command builds a paste-ready invite with the live tunnel URL + token</span>
               </div>
               <div class="cc-field">
-                <label>LAN URL</label>
-                <div class="cc-row">
-                  <input type="text" id="connect-lan-url" readonly />
-                  <button class="cc-btn" data-copy="connect-lan-url">COPY</button>
-                </div>
-                <div class="cc-hint" id="connect-lan-hint">Anyone on the same Wi-Fi can use this.</div>
+                <label>RUN THIS</label>
+                <pre id="connect-invite-cmd">./scripts/mesh-invite</pre>
+                <div class="cc-hint">Prints a single block your friend pastes into their terminal. This is the path that works behind the tunnel.</div>
               </div>
               <div class="cc-field">
-                <label>WEBSOCKET URL <span class="cc-tag">for Claude Code</span></label>
+                <label>BROKER URL <span class="cc-tag">for Claude Code</span></label>
                 <div class="cc-row">
-                  <input type="text" id="connect-ws-url" readonly />
+                  <input type="text" id="connect-ws-url" readonly placeholder="loading…" />
                   <button class="cc-btn" data-copy="connect-ws-url">COPY</button>
                 </div>
-                <div class="cc-hint">Set <code>BROKER_URL</code> to this value before running <code>connect.py</code>.</div>
+                <div class="cc-hint" id="connect-ws-hint">Set <code>BROKER_URL</code> to this value before running <code>connect.py</code>.</div>
               </div>
               <div class="cc-field">
                 <label>SHARED TOKEN</label>
@@ -1831,19 +1276,9 @@
                 <textarea id="connect-bundle" readonly rows="4"></textarea>
                 <div class="cc-row" style="margin-top:6px">
                   <button class="cc-btn cc-btn-primary" data-copy="connect-bundle">COPY BUNDLE</button>
-                  <button class="cc-btn" id="connect-regen">REGENERATE</button>
+                  <button class="cc-btn" id="connect-regen">REFRESH</button>
                 </div>
-              </div>
-            </div>
-
-            <div class="connect-card">
-              <div class="cc-head">
-                <span class="cc-title">QR CODE</span>
-                <span class="cc-sub">Scan with another device on the same LAN</span>
-              </div>
-              <div class="cc-qr-wrap">
-                <div id="connect-qr"></div>
-                <div class="cc-qr-caption" id="connect-qr-caption">Opens this dashboard on the scanning device.</div>
+                <div class="cc-hint" id="connect-share-hint"></div>
               </div>
             </div>
 
@@ -1902,19 +1337,10 @@ ngrok http 8766   # in a second terminal for the WS port</pre>
         </div>
       </div>
 
-      <!-- CONTROL -->
+      <!-- CONTROL → AUDIT log (the only used Control feature) -->
       <div class="tab-pane" id="pane-control">
-        <div id="ctl-tabs">
-          <button class="ctl-tab-btn active" data-ctab="approvals">APPROVALS</button>
-          <button class="ctl-tab-btn" data-ctab="votes">VOTES</button>
-          <button class="ctl-tab-btn" data-ctab="roles">ROLES</button>
-          <button class="ctl-tab-btn" data-ctab="audit">AUDIT</button>
-        </div>
         <div id="ctl-content">
-          <div class="ctl-pane active" id="ctl-approvals"></div>
-          <div class="ctl-pane" id="ctl-votes"></div>
-          <div class="ctl-pane" id="ctl-roles"></div>
-          <div class="ctl-pane" id="ctl-audit">
+          <div class="ctl-pane active" id="ctl-audit">
             <div class="audit-bar">
               FILTER:
               <select id="audit-filter"><option value="">ALL AGENTS</option></select>
@@ -1949,8 +1375,6 @@ ngrok http 8766   # in a second terminal for the WS port</pre>
     <table>
       <tr><td class="k">j</td><td class="d">Next message</td></tr>
       <tr><td class="k">k</td><td class="d">Previous message</td></tr>
-      <tr><td class="k">n</td><td class="d">New task</td></tr>
-      <tr><td class="k">t</td><td class="d">Switch to TASKS tab</td></tr>
       <tr><td class="k">m</td><td class="d">Switch to CHAT tab</td></tr>
       <tr><td class="k">?</td><td class="d">Toggle this help</td></tr>
       <tr><td class="k">Esc</td><td class="d">Dismiss</td></tr>
@@ -1987,42 +1411,24 @@ const STATE = {
   reconnectAttempt: 0,
   reconnectTimer: null,
   countdownTimer: null,
-  emergencyStopped: false,
 
   // Server snapshot
   instances: [], // {id, name, project, role, status, task, workload, online, last_seen}
   messages: [],  // {id, from, to, text, ts, relay}
-  tasks: [],     // {id, title, assignee, priority, status, deps, progress, history, notes}
-  memory: [],    // {key, value, type, author, ts}
-  flows: [],     // {id, name, trigger, action_desc, color, enabled, status}
-  approvals: [], // {id, agent, action, risk, detail, decision, decided_at}
-  votes: [],     // {id, question, options:[{label, votes:[agent_id]}], my_vote}
   audit: [],     // {ts, agent, action, detail}
 
   // UI state
   currentTab: localStorage.getItem('am.tab') || 'chat',
-  currentCTab: localStorage.getItem('am.ctab') || 'approvals',
   currentThread: localStorage.getItem('am.thread') || '', // '' or instance id or 'all'
   broadcastMode: localStorage.getItem('am.bcast') === '1',
-  tasksFilter: '',
-  memFilter: '',
-  selectedMemType: 'config',
-  selectedSwatch: '#C9A84C',
   typing: {}, // instance_id -> bool
   unread: {}, // instance_id -> count
-  expandedTask: null,
-  draggingTask: null,
-  showThread: false, // mobile
   auditFilter: '',
-  showThreadInMobile: false,
-  plugins: [],     // {id, marketplace, version, skills, agents, commands}
-  pluginsLoaded: false,
   channels: [],    // [{id, name, members:[instance_id], created_at}] from broker
 };
 
 // Color-blind-safe palette (Okabe-Ito)
 const AGENT_PALETTE = ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2', '#D55E00', '#CC79A7', '#999999'];
-const SWATCHES = AGENT_PALETTE;
 const QUICK_COMMANDS = [
   "What are you working on?",
   "Pause and wait.",
@@ -2032,18 +1438,6 @@ const QUICK_COMMANDS = [
   "Message all other instances your progress.",
   "What's blocking you?"
 ];
-const TEMPLATES = [
-  {name: "Sequential pipeline", trigger: "When cc1 marks T1 done", action: "Assign T2 to cc2 and notify"},
-  {name: "Parallel merge gate", trigger: "When cc1 and cc2 both finish their parts", action: "Notify cc3 to integrate"},
-  {name: "Error broadcast", trigger: "When any instance reports an error", action: "Broadcast error to all"},
-  {name: "Auto-retry", trigger: "When task fails", action: "Reset to in_progress, notify assignee"},
-  {name: "Timeout escalation", trigger: "Task in_progress > 2h", action: "Escalate to orchestrator"},
-  {name: "Approval gate", trigger: "When destructive action requested", action: "Pause and request human approval"},
-  {name: "Branch and recombine", trigger: "When design decision made", action: "Fork sub-tasks to all frontend instances"},
-  {name: "Scheduled trigger", trigger: "Every hour", action: "Request status from all instances"},
-];
-const ROLE_OPTIONS = ['Orchestrator','Frontend','Backend','QA','DevOps','Security','Docs','Data'];
-const MEM_TYPES = ['contract','config','design','decision','error','pattern'];
 
 // ============================================================================
 // UTIL
@@ -2271,24 +1665,7 @@ function showBanner(cls, text, withRetry) {
 }
 
 function clearBanner() {
-  if (STATE.emergencyStopped) {
-    showEmergencyBanner();
-    return;
-  }
   clear($('banner-area'));
-}
-
-function showEmergencyBanner() {
-  const area = $('banner-area');
-  clear(area);
-  const b = el('div', {cls: 'banner err'});
-  b.appendChild(el('span', {text: 'ALL INSTANCES STOPPED — PRESS ▶ TO RESUME'}));
-  b.appendChild(el('button', {text: 'RESUME', on: {click: () => {
-    send({action: 'resume_all'});
-    STATE.emergencyStopped = false;
-    clearBanner();
-  }}}));
-  area.appendChild(b);
 }
 
 function send(payload) {
@@ -2304,92 +1681,51 @@ function send(payload) {
 // ============================================================================
 function handleServerMessage(msg) {
   const t = msg.type;
-  if (t === 'init') {
-    if (msg.instances) STATE.instances = msg.instances;
-    if (msg.messages) STATE.messages = msg.messages;
-    if (msg.tasks) STATE.tasks = msg.tasks;
-    if (msg.memory) STATE.memory = msg.memory;
-    if (msg.flows) STATE.flows = msg.flows;
-    if (msg.approvals) STATE.approvals = msg.approvals;
-    if (msg.votes) STATE.votes = msg.votes;
-    if (msg.audit) STATE.audit = msg.audit;
-    renderAll();
-  } else if (t === 'state_update') {
-    if (msg.instances) STATE.instances = msg.instances;
-    if (msg.messages) STATE.messages = msg.messages;
-    if (msg.tasks) STATE.tasks = msg.tasks;
-    if (msg.memory) STATE.memory = msg.memory;
-    if (msg.flows) STATE.flows = msg.flows;
-    if (msg.approvals) STATE.approvals = msg.approvals;
-    if (msg.votes) STATE.votes = msg.votes;
-    if (msg.audit) STATE.audit = msg.audit;
-    if (msg.channels) STATE.channels = msg.channels;
+  if (t === 'init' || t === 'state_update') {
+    // The broker NESTS the snapshot under `delta` for state_update; `init`
+    // (if ever sent) carries the same fields top-level. Read whichever exists.
+    const d = msg.delta || msg;
+    if (d.instances) STATE.instances = d.instances;
+    if (d.messages) STATE.messages = d.messages;
+    if (d.audit) STATE.audit = d.audit;
+    if (d.channels) STATE.channels = d.channels;
     renderAll();
   } else if (t === 'channels') {
     STATE.channels = msg.channels || [];
     renderConvList();
   } else if (t === 'message') {
+    // The broker wraps the record: {type:'message', message:{id,from,to,...}}.
+    // Guard FIRST — a malformed/empty frame must not create a phantom
+    // all-undefined message or an unclearable STATE.unread['undefined'] badge.
+    if (!msg.message || !msg.message.id) return;
+    const src = msg.message;
     const m = {
-      id: msg.id, from: msg.from, to: msg.to, text: msg.text,
-      ts: msg.ts || Date.now()/1000, relay: !!msg.relay,
-      channel: msg.channel || null,
+      id: src.id, from: src.from, to: src.to, text: src.text,
+      ts: src.ts || Date.now()/1000, relay: !!src.relay,
+      channel: src.channel || null,
     };
     // Skip if we already have this id (poll/WS race or duplicate echo).
-    if (m.id && STATE.messages.some(x => x.id === m.id)) {
+    if (STATE.messages.some(x => x.id === m.id)) {
       return;
     }
     STATE.messages.push(m);
     // Unread tracking
-    if (msg.from !== 'you') {
-      const key = msg.to === 'you' ? msg.from : (msg.to === 'all' ? 'all' : msg.from);
+    if (m.from !== 'you') {
+      const key = m.to === 'you' ? m.from : (m.to === 'all' ? 'all' : m.from);
       if (STATE.currentTab !== 'chat' || STATE.currentThread !== key) {
         STATE.unread[key] = (STATE.unread[key] || 0) + 1;
       }
+      notifyIncoming(m);
     }
     renderChat();
     renderConvList();
     renderTabBadges();
   } else if (t === 'typing') {
-    STATE.typing[msg.instance_id] = !!msg.value;
-    renderConvList();
-    renderChatHeader();
-  } else if (t === 'instance_update') {
-    const idx = STATE.instances.findIndex(i => i.id === msg.id);
-    if (idx >= 0) {
-      Object.assign(STATE.instances[idx], msg);
-    } else {
-      STATE.instances.push({
-        id: msg.id, name: msg.name || msg.id, project: msg.project || '',
-        role: msg.role || '', status: msg.status || '', task: msg.task || '',
-        workload: msg.workload || 0, online: msg.online !== false,
-        last_seen: msg.last_seen || Date.now()/1000
-      });
-    }
-    renderSidebar();
-    renderAgentStrip();
-    renderConvList();
-    renderRoles();
-  } else if (t === 'approval') {
-    const idx = STATE.approvals.findIndex(a => a.id === msg.id);
-    if (idx >= 0) STATE.approvals[idx] = Object.assign(STATE.approvals[idx], msg);
-    else STATE.approvals.push(msg);
-    renderApprovals();
-    renderTabBadges();
-  } else if (t === 'flow_fired') {
-    const flow = STATE.flows.find(f => f.id === msg.id);
-    if (flow) {
-      flow.status = 'fired';
-      const row = document.querySelector(`.flow-row[data-flow-id="${msg.id}"]`);
-      if (row) {
-        row.classList.add('fired');
-        setTimeout(() => row.classList.remove('fired'), 800);
-      }
-      STATE.audit.unshift({
-        ts: Date.now()/1000, agent: 'system',
-        action: 'flow_fired', detail: flow.name
-      });
-      renderFlows();
-      renderAudit();
+    // The broker keys the instance as `id` (not `instance_id`).
+    if (msg.id) {
+      STATE.typing[msg.id] = !!msg.value;
+      renderConvList();
+      renderChatHeader();
     }
   }
 }
@@ -2402,32 +1738,18 @@ function renderAll() {
   renderAgentStrip();
   renderConvList();
   renderChat();
-  renderTasks();
-  renderFlows();
-  renderMemory();
-  renderApprovals();
-  renderVotes();
-  renderRoles();
   renderAudit();
   renderTabBadges();
 }
 
 function renderTabBadges() {
-  const pending = STATE.approvals.filter(a => a.decision == null).length;
-  const ctl = $('badge-control');
-  if (pending > 0) { ctl.style.display = 'inline-block'; ctl.textContent = pending; }
-  else ctl.style.display = 'none';
-
   let unreadTotal = 0;
   for (const k in STATE.unread) unreadTotal += STATE.unread[k];
   const chat = $('badge-chat');
-  if (unreadTotal > 0) { chat.style.display = 'inline-block'; chat.textContent = unreadTotal; }
-  else chat.style.display = 'none';
-
-  const blocked = STATE.tasks.filter(t => isBlocked(t)).length;
-  const tasks = $('badge-tasks');
-  if (blocked > 0) { tasks.style.display = 'inline-block'; tasks.textContent = blocked; }
-  else tasks.style.display = 'none';
+  if (chat) {
+    if (unreadTotal > 0) { chat.style.display = 'inline-block'; chat.textContent = unreadTotal; }
+    else chat.style.display = 'none';
+  }
 }
 
 // ---------- SIDEBAR ----------
@@ -2452,18 +1774,10 @@ function renderSidebar() {
   }
   for (const inst of STATE.instances) {
     const card = el('div', {
-      cls: 'agent-card' + (STATE.currentThread === inst.id ? ' active' : '')
-             + (STATE.tasksFilter === inst.id ? ' filtered' : ''),
+      cls: 'agent-card' + (STATE.currentThread === inst.id ? ' active' : ''),
       on: {click: () => {
-        if (STATE.currentTab === 'tasks') {
-          STATE.tasksFilter = STATE.tasksFilter === inst.id ? '' : inst.id;
-          renderTasks();
-          renderSidebar();
-          renderAgentStrip();
-        } else {
-          selectThread(inst.id);
-          switchTab('chat');
-        }
+        selectThread(inst.id);
+        switchTab('chat');
       }}
     });
     const row1 = el('div', {cls: 'ac-row1'});
@@ -2519,8 +1833,6 @@ function renderSidebar() {
   // Stats
   const stats = $('sb-stats');
   clear(stats);
-  const openTasks = STATE.tasks.filter(t => t.status !== 'done').length;
-  const pendingApprovals = STATE.approvals.filter(a => a.decision == null).length;
   const onlineCount = STATE.instances.filter(isOnline).length;
   const statItem = (l, v) => {
     const d = el('div', {cls: 'sb-stat'});
@@ -2530,10 +1842,6 @@ function renderSidebar() {
   };
   stats.appendChild(statItem('Online', onlineCount));
   stats.appendChild(statItem('Msgs', STATE.messages.length));
-  stats.appendChild(statItem('Tasks', openTasks));
-  stats.appendChild(statItem('Pend', pendingApprovals));
-  stats.appendChild(statItem('Mem', STATE.memory.length));
-  stats.appendChild(statItem('Flows', STATE.flows.length));
 }
 
 function renderAgentStrip() {
@@ -2541,15 +1849,10 @@ function renderAgentStrip() {
   clear(root);
   for (const inst of STATE.instances) {
     const pill = el('div', {
-      cls: 'agent-pill' + (STATE.tasksFilter === inst.id ? ' filtered' : ''),
+      cls: 'agent-pill',
       on: {click: () => {
-        if (STATE.currentTab === 'tasks') {
-          STATE.tasksFilter = STATE.tasksFilter === inst.id ? '' : inst.id;
-          renderTasks();
-        } else {
-          selectThread(inst.id);
-          switchTab('chat');
-        }
+        selectThread(inst.id);
+        switchTab('chat');
       }}
     });
     const dot = el('div', {cls: 'ac-dot ' + (isOnline(inst) ? 'online' : '')});
@@ -2805,7 +2108,6 @@ function selectThread(id) {
   applyBroadcastUI();  // refreshes the BROADCAST toggle visibility
   const pane = $('pane-chat');
   pane.classList.add('show-thread');
-  STATE.showThreadInMobile = true;
   renderConvList();
   renderChat();
   renderChatHeader();
@@ -2961,548 +2263,7 @@ function renderChat() {
   renderChatHeader();
 }
 
-// ---------- TASKS ----------
-function isBlocked(task) {
-  if (!task.deps || !task.deps.length) return false;
-  if (task.status === 'done') return false;
-  return task.deps.some(d => {
-    const dep = STATE.tasks.find(t => t.id === d);
-    return !dep || dep.status !== 'done';
-  });
-}
-
-function renderTasks() {
-  // Update assignee + deps options
-  const asSel = $('ct-assignee');
-  clear(asSel);
-  asSel.appendChild(el('option', {text: '— assignee —', attrs: {value: ''}}));
-  for (const i of STATE.instances) {
-    asSel.appendChild(el('option', {text: i.name || i.id, attrs: {value: i.id}}));
-  }
-  const depsSel = $('ct-deps');
-  clear(depsSel);
-  for (const t of STATE.tasks) {
-    depsSel.appendChild(el('option', {text: t.id + ': ' + truncate(t.title, 30), attrs: {value: t.id}}));
-  }
-
-  // Filter bar
-  $('tasks-filter-display').textContent = STATE.tasksFilter
-    ? (agentName(STATE.tasksFilter).toUpperCase())
-    : 'ALL';
-  $('tasks-clear-filter').style.display = STATE.tasksFilter ? '' : 'none';
-
-  const cols = ['backlog', 'in_progress', 'review', 'done'];
-  for (const status of cols) {
-    const root = $('col-' + status);
-    clear(root);
-    let tasks = STATE.tasks.filter(t => t.status === status);
-    if (STATE.tasksFilter) tasks = tasks.filter(t => t.assignee === STATE.tasksFilter);
-    $('cnt-' + status).textContent = tasks.length;
-    if (!tasks.length) {
-      root.appendChild(el('div', {cls: 'empty-state', text: '—'}));
-    }
-    for (const t of tasks) {
-      root.appendChild(renderTaskCard(t));
-    }
-  }
-}
-
-function renderTaskCard(t) {
-  const blocked = isBlocked(t);
-  const card = el('div', {
-    cls: 'task-card' + (blocked ? ' blocked' : ''),
-    attrs: {draggable: 'true', 'data-task-id': t.id}
-  });
-  card.addEventListener('dragstart', (e) => {
-    STATE.draggingTask = t.id;
-    e.dataTransfer.effectAllowed = 'move';
-  });
-  card.addEventListener('dragend', () => { STATE.draggingTask = null; });
-  card.addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;
-    STATE.expandedTask = STATE.expandedTask === t.id ? null : t.id;
-    renderTasks();
-  });
-
-  card.appendChild(el('div', {cls: 'tc-title', text: t.id ? `[${t.id}] ${t.title}` : t.title}));
-
-  const meta = el('div', {cls: 'tc-meta'});
-  if (t.assignee) {
-    const aPill = el('span', {cls: 'pill agent', text: agentName(t.assignee)});
-    aPill.style.color = agentColor(t.assignee);
-    aPill.style.borderColor = agentColor(t.assignee);
-    meta.appendChild(aPill);
-  }
-  if (t.priority) {
-    meta.appendChild(el('span', {cls: 'pill priority-' + t.priority, text: t.priority.toUpperCase()}));
-  }
-  if (blocked) {
-    meta.appendChild(el('span', {cls: 'pill blocked', text: 'BLOCKED'}));
-  }
-  card.appendChild(meta);
-
-  if (t.deps && t.deps.length) {
-    card.appendChild(el('div', {cls: 'tc-deps', text: 'DEPS: ' + t.deps.join(', ')}));
-  }
-  if (t.status === 'in_progress' && t.progress != null) {
-    const prog = el('div', {cls: 'workload-bar tc-progress'});
-    const fill = el('div', {cls: 'workload-fill'});
-    fill.style.width = (t.progress || 0) + '%';
-    fill.style.background = 'var(--gold)';
-    prog.appendChild(fill);
-    card.appendChild(prog);
-  }
-
-  // Moves
-  const moves = el('div', {cls: 'tc-moves'});
-  const order = ['backlog', 'in_progress', 'review', 'done'];
-  const idx = order.indexOf(t.status);
-  if (idx > 0) {
-    moves.appendChild(el('button', {text: '←', attrs: {title: 'Move left'},
-      on: {click: (e) => { e.stopPropagation(); send({action: 'move_task', id: t.id, status: order[idx-1]}); }}}));
-  }
-  if (idx < order.length - 1) {
-    moves.appendChild(el('button', {text: '→', attrs: {title: 'Move right'},
-      on: {click: (e) => { e.stopPropagation(); send({action: 'move_task', id: t.id, status: order[idx+1]}); }}}));
-  }
-  card.appendChild(moves);
-
-  if (STATE.expandedTask === t.id) {
-    card.appendChild(renderTaskDetail(t));
-  }
-  return card;
-}
-
-function renderTaskDetail(t) {
-  const d = el('div', {cls: 'tc-detail'});
-
-  d.appendChild(el('div', {cls: 'label', text: 'ASSIGNEE'}));
-  const aSel = el('select');
-  aSel.appendChild(el('option', {text: '—', attrs: {value: ''}}));
-  for (const i of STATE.instances) {
-    const opt = el('option', {text: i.name || i.id, attrs: {value: i.id}});
-    if (t.assignee === i.id) opt.selected = true;
-    aSel.appendChild(opt);
-  }
-  aSel.addEventListener('change', () => {
-    send({action: 'update_task', id: t.id, assignee: aSel.value});
-  });
-  aSel.addEventListener('click', (e) => e.stopPropagation());
-  d.appendChild(aSel);
-
-  d.appendChild(el('div', {cls: 'label', text: 'PRIORITY'}));
-  const pSel = el('select');
-  for (const p of ['low','medium','high']) {
-    const opt = el('option', {text: p.toUpperCase(), attrs: {value: p}});
-    if (t.priority === p) opt.selected = true;
-    pSel.appendChild(opt);
-  }
-  pSel.addEventListener('change', () => send({action: 'update_task', id: t.id, priority: pSel.value}));
-  pSel.addEventListener('click', (e) => e.stopPropagation());
-  d.appendChild(pSel);
-
-  if (t.deps && t.deps.length) {
-    d.appendChild(el('div', {cls: 'label', text: 'DEP GRAPH'}));
-    const dg = el('div', {style: {fontSize: '10px'}});
-    for (const dep of t.deps) {
-      const depT = STATE.tasks.find(x => x.id === dep);
-      const ln = el('div');
-      ln.textContent = (depT && depT.status === 'done' ? '✓ ' : '… ') + dep + (depT ? ' — ' + truncate(depT.title, 30) : ' (missing)');
-      ln.style.color = depT && depT.status === 'done' ? 'var(--green)' : 'var(--red)';
-      dg.appendChild(ln);
-    }
-    const arrow = el('div', {text: '↓ ' + t.id, style: {color: 'var(--dim)', marginTop: '4px'}});
-    dg.appendChild(arrow);
-    d.appendChild(dg);
-  }
-
-  if (t.history && t.history.length) {
-    d.appendChild(el('div', {cls: 'label', text: 'HISTORY'}));
-    const h = el('div', {style: {fontSize: '9px', color: 'var(--dim)'}});
-    for (const ev of t.history.slice(-10)) {
-      h.appendChild(el('div', {text: fmtTime(ev.ts) + ' · ' + ev.event}));
-    }
-    d.appendChild(h);
-  }
-
-  d.appendChild(el('div', {cls: 'label', text: 'NOTES'}));
-  const notesArea = el('textarea', {attrs: {placeholder: 'notes…'}});
-  notesArea.value = t.notes || '';
-  notesArea.addEventListener('click', (e) => e.stopPropagation());
-  const saveBtn = el('button', {text: 'SAVE NOTES',
-    on: {click: (e) => {
-      e.stopPropagation();
-      send({action: 'update_task', id: t.id, notes: notesArea.value});
-    }}});
-  d.appendChild(notesArea);
-  d.appendChild(saveBtn);
-
-  d.appendChild(el('button', {text: 'DELETE', cls: 'danger',
-    style: {marginLeft: '6px'},
-    on: {click: (e) => {
-      e.stopPropagation();
-      confirmModal('DELETE TASK?', `Permanently delete [${t.id}] ${t.title}?`, () => {
-        send({action: 'delete_task', id: t.id});
-      });
-    }}}));
-
-  return d;
-}
-
-// ---------- FLOWS ----------
-function renderFlows() {
-  // Templates
-  const tg = $('tmpl-grid');
-  clear(tg);
-  for (const t of TEMPLATES) {
-    const card = el('div', {cls: 'template-card',
-      on: {click: () => {
-        $('fl-name').value = t.name;
-        $('fl-trigger').value = t.trigger;
-        $('fl-action').value = t.action;
-      }}});
-    card.appendChild(el('b', {text: t.name}));
-    card.appendChild(el('div', {text: 'IF: ' + truncate(t.trigger, 50), style: {color: 'var(--dim)', marginBottom: '2px'}}));
-    card.appendChild(el('div', {text: 'THEN: ' + truncate(t.action, 50), style: {color: 'var(--dim)'}}));
-    tg.appendChild(card);
-  }
-
-  // Swatches
-  const sw = $('fl-swatches');
-  if (!sw.childElementCount) {
-    for (const c of SWATCHES) {
-      const s = el('div', {cls: 'swatch' + (c === STATE.selectedSwatch ? ' selected' : ''),
-        style: {background: c}, attrs: {'data-color': c},
-        on: {click: () => {
-          STATE.selectedSwatch = c;
-          for (const sib of sw.children) sib.classList.toggle('selected', sib.dataset.color === c);
-        }}});
-      sw.appendChild(s);
-    }
-  }
-
-  // List
-  const root = $('flow-list');
-  clear(root);
-  if (!STATE.flows.length) {
-    root.appendChild(el('div', {cls: 'empty-state', text: 'NO FLOWS'}));
-  }
-  for (const f of STATE.flows) {
-    const row = el('div', {cls: 'flow-row', attrs: {'data-flow-id': f.id}});
-    const color = el('div', {cls: 'flow-color'});
-    color.style.background = f.color || '#C9A84C';
-    row.appendChild(color);
-    const info = el('div', {cls: 'flow-info'});
-    info.appendChild(el('div', {cls: 'flow-name', text: f.name}));
-    info.appendChild(el('div', {cls: 'flow-detail', text: 'IF: ' + (f.trigger || '')}));
-    info.appendChild(el('div', {cls: 'flow-detail', text: 'THEN: ' + (f.action_desc || f.action || '')}));
-    const stat = el('span', {cls: 'pill', text: (f.status || 'waiting').toUpperCase()});
-    stat.style.marginTop = '4px'; stat.style.display = 'inline-block';
-    info.appendChild(stat);
-    row.appendChild(info);
-    const actions = el('div', {cls: 'flow-actions'});
-    const toggle = el('div', {cls: 'flow-toggle' + (f.enabled !== false ? ' on' : ''),
-      on: {click: () => send({action: 'toggle_flow', id: f.id})}});
-    actions.appendChild(toggle);
-    actions.appendChild(el('button', {text: 'FIRE',
-      on: {click: () => send({action: 'fire_flow', id: f.id})}}));
-    actions.appendChild(el('button', {text: 'DEL',
-      on: {click: () => confirmModal('DELETE FLOW?', f.name, () => send({action: 'delete_flow', id: f.id}))}}));
-    row.appendChild(actions);
-    root.appendChild(row);
-  }
-}
-
-// ---------- MEMORY ----------
-function renderMemory() {
-  // Type pills in form
-  const tForm = $('mem-types');
-  clear(tForm);
-  for (const ty of MEM_TYPES) {
-    const p = el('div', {cls: 'type-pill' + (ty === STATE.selectedMemType ? ' selected' : ''),
-      attrs: {'data-type': ty}, text: ty,
-      on: {click: () => {
-        STATE.selectedMemType = ty;
-        renderMemory();
-      }}});
-    tForm.appendChild(p);
-  }
-
-  // Filter pills
-  const filters = $('mem-filters');
-  clear(filters);
-  const allP = el('div', {cls: 'type-pill' + (STATE.memFilter === '' ? ' active' : ''),
-    text: 'ALL', on: {click: () => { STATE.memFilter = ''; renderMemory(); }}});
-  filters.appendChild(allP);
-  for (const ty of MEM_TYPES) {
-    const p = el('div', {cls: 'type-pill' + (STATE.memFilter === ty ? ' active' : ''),
-      attrs: {'data-type': ty}, text: ty,
-      on: {click: () => { STATE.memFilter = ty; renderMemory(); }}});
-    filters.appendChild(p);
-  }
-
-  // List
-  const list = $('mem-list');
-  clear(list);
-  let entries = STATE.memory;
-  if (STATE.memFilter) entries = entries.filter(e => e.type === STATE.memFilter);
-  entries = [...entries].sort((a,b) => (b.ts||0) - (a.ts||0));
-  if (!entries.length) {
-    list.appendChild(el('div', {cls: 'empty-state', text: 'NO MEMORY ENTRIES'}));
-  }
-  for (const m of entries) {
-    const card = el('div', {cls: 'mem-entry ' + (m.type || '')});
-    const head = el('div', {cls: 'me-head'});
-    head.appendChild(el('span', {cls: 'pill', text: (m.type || 'unknown').toUpperCase(),
-      style: {color: typeColor(m.type), borderColor: typeColor(m.type)}}));
-    head.appendChild(el('span', {cls: 'me-key', text: m.key}));
-    card.appendChild(head);
-    card.appendChild(el('div', {cls: 'me-value', text: m.value}));
-    const foot = el('div', {cls: 'me-foot'});
-    const left = el('span');
-    const author = el('span', {cls: 'pill', text: agentName(m.author || 'unknown'),
-      style: {color: agentColor(m.author), borderColor: agentColor(m.author), marginRight: '6px'}});
-    left.appendChild(author);
-    left.appendChild(document.createTextNode(m.ts ? fmtDate(m.ts) : ''));
-    foot.appendChild(left);
-    foot.appendChild(el('button', {text: 'DELETE',
-      on: {click: () => confirmModal('DELETE MEMORY?',
-        m.key, () => send({action: 'memory_delete', key: m.key}))}}));
-    card.appendChild(foot);
-    list.appendChild(card);
-  }
-}
-
-function typeColor(type) {
-  return {
-    contract: 'var(--blue)', config: 'var(--green)', design: 'var(--purple)',
-    decision: 'var(--gold)', error: 'var(--red)', pattern: 'var(--teal)'
-  }[type] || 'var(--dim)';
-}
-
-// ---------- PLUGINS ----------
-function loadPlugins(force) {
-  if (STATE.pluginsLoaded && !force) return Promise.resolve();
-  return fetch('/api/plugins').then(r => r.json()).then(data => {
-    STATE.plugins = data.plugins || [];
-    STATE.pluginsLoaded = true;
-    renderPlugins();
-  }).catch(e => {
-    console.error('plugin load failed', e);
-  });
-}
-
-function renderPlugins() {
-  const list = $('plug-list');
-  if (!list) return;
-  clear(list);
-  if (!STATE.plugins.length) {
-    list.appendChild(el('div', {cls: 'empty-state', text: 'NO PLUGINS FOUND'}));
-    return;
-  }
-  // group by marketplace
-  const groups = {};
-  for (const p of STATE.plugins) {
-    const mkt = p.marketplace || 'other';
-    (groups[mkt] = groups[mkt] || []).push(p);
-  }
-  const marketplaces = Object.keys(groups).sort();
-  for (const mkt of marketplaces) {
-    list.appendChild(el('div', {cls: 'section-head', text: mkt + ' (' + groups[mkt].length + ')'}));
-    for (const p of groups[mkt]) {
-      const card = el('div', {cls: 'mem-entry',
-        style: {cursor: 'pointer'},
-        on: {click: () => openPluginModal(p.id)}});
-      const head = el('div', {cls: 'me-head'});
-      head.appendChild(el('span', {cls: 'me-key', text: p.id}));
-      head.appendChild(el('span', {cls: 'pill', text: 'v' + (p.version || '?'),
-        style: {color: 'var(--dim)', borderColor: 'var(--dim)', marginLeft: '6px'}}));
-      card.appendChild(head);
-      const sub = el('div', {cls: 'me-value',
-        text: `${p.skills} skill(s) · ${p.agents} agent(s) · ${p.commands} command(s)`});
-      card.appendChild(sub);
-      list.appendChild(card);
-    }
-  }
-}
-
-function openPluginModal(pluginId) {
-  fetch('/api/plugins/' + encodeURIComponent(pluginId)).then(r => r.json()).then(d => {
-    $('modal-t').textContent = (d.id || pluginId).toUpperCase() + ' · v' + (d.version || '?');
-    const body = $('modal-b');
-    clear(body);
-    body.style.textAlign = 'left';
-    body.style.maxHeight = '60vh';
-    body.style.overflow = 'auto';
-    const meta = el('div', {style: {marginBottom: '8px', fontSize: '11px', color: 'var(--dim)'}});
-    meta.appendChild(el('div', {text: 'marketplace: ' + (d.marketplace || '')}));
-    meta.appendChild(el('div', {text: 'path: ' + (d.path || '')}));
-    if (d.manifest && d.manifest.description) {
-      meta.appendChild(el('div', {text: d.manifest.description,
-        style: {marginTop: '6px', color: 'var(--body)'}}));
-    }
-    body.appendChild(meta);
-    const addList = (label, items) => {
-      if (!items || !items.length) return;
-      body.appendChild(el('div', {cls: 'section-head', text: label + ' (' + items.length + ')'}));
-      const ul = el('div', {style: {fontSize: '11px', fontFamily: 'monospace'}});
-      for (const it of items) ul.appendChild(el('div', {text: '· ' + it}));
-      body.appendChild(ul);
-    };
-    addList('SKILLS', d.skills);
-    addList('AGENTS', d.agents);
-    addList('COMMANDS', d.commands);
-    body.appendChild(el('div', {cls: 'section-head', text: 'MANIFEST'}));
-    body.appendChild(el('pre', {text: JSON.stringify(d.manifest || {}, null, 2),
-      style: {fontSize: '10px', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              background: 'var(--bg2, #1a1a1a)', padding: '8px', borderRadius: '4px'}}));
-    $('modal').classList.add('show');
-    const ok = $('modal-ok'), cancel = $('modal-cancel');
-    ok.textContent = 'CLOSE';
-    cancel.style.display = 'none';
-    const close = () => {
-      $('modal').classList.remove('show');
-      ok.textContent = 'CONFIRM';
-      cancel.style.display = '';
-      ok.removeEventListener('click', close);
-    };
-    ok.addEventListener('click', close);
-  }).catch(e => console.error('plugin detail failed', e));
-}
-
-// ---------- CONTROL ----------
-function renderApprovals() {
-  const root = $('ctl-approvals');
-  clear(root);
-  const pending = STATE.approvals.filter(a => a.decision == null);
-  const resolved = STATE.approvals.filter(a => a.decision != null);
-  if (!pending.length && !resolved.length) {
-    root.appendChild(el('div', {cls: 'empty-state', text: 'NO APPROVALS'}));
-    return;
-  }
-  if (pending.length) {
-    root.appendChild(el('div', {cls: 'section-head', text: 'PENDING (' + pending.length + ')'}));
-    for (const a of pending) root.appendChild(renderApprovalCard(a, false));
-  }
-  if (resolved.length) {
-    root.appendChild(el('div', {cls: 'section-head', text: 'RESOLVED'}));
-    for (const a of resolved.slice(-20).reverse()) root.appendChild(renderApprovalCard(a, true));
-  }
-}
-
-function renderApprovalCard(a, resolved) {
-  const card = el('div', {cls: 'approval-card' + (resolved ? ' resolved' : '')});
-  const head = el('div', {cls: 'ap-head'});
-  // requester id: broker stores it as `from` (legacy data may use `agent`)
-  const requester = a.from || a.agent || 'unknown';
-  const inst = STATE.instances.find(i => i.id === requester);
-  const requesterName = inst ? inst.name : agentName(requester);
-  const requesterProject = inst ? (inst.project || '') : '';
-  const labelText = requesterProject ? (requesterName + ' · ' + requesterProject) : requesterName;
-  const ag = el('span', {cls: 'pill agent', text: labelText});
-  ag.style.color = agentColor(requester); ag.style.borderColor = agentColor(requester);
-  head.appendChild(ag);
-  head.appendChild(el('span', {cls: 'pill risk-' + (a.risk || 'low'), text: 'RISK: ' + (a.risk || 'low').toUpperCase()}));
-  if (resolved) {
-    head.appendChild(el('span', {cls: 'pill', text: a.decision ? 'APPROVED' : 'REJECTED',
-      style: {color: a.decision ? 'var(--green)' : 'var(--red)',
-              borderColor: a.decision ? 'var(--green)' : 'var(--red)'}}));
-  }
-  card.appendChild(head);
-  card.appendChild(el('div', {cls: 'ap-action', text: a.action || ''}));
-  if (a.detail) card.appendChild(el('div', {cls: 'ap-detail', text: a.detail}));
-  if (!resolved) {
-    const btns = el('div', {cls: 'ap-buttons'});
-    btns.appendChild(el('button', {cls: 'approve', text: 'APPROVE',
-      on: {click: () => send({action: 'approve', id: a.id, decision: true})}}));
-    btns.appendChild(el('button', {cls: 'reject', text: 'REJECT',
-      on: {click: () => send({action: 'approve', id: a.id, decision: false})}}));
-    card.appendChild(btns);
-  }
-  return card;
-}
-
-function renderVotes() {
-  const root = $('ctl-votes');
-  clear(root);
-  if (!STATE.votes.length) {
-    root.appendChild(el('div', {cls: 'empty-state', text: 'NO ACTIVE VOTES'}));
-    return;
-  }
-  for (const v of STATE.votes) {
-    const card = el('div', {cls: 'vote-card'});
-    card.appendChild(el('div', {cls: 'vote-q', text: v.question}));
-    const options = v.options || [];
-    const counts = options.map(o => (o.votes || []).length);
-    const max = Math.max(1, ...counts);
-    const leadIdx = counts.indexOf(Math.max(...counts));
-    for (let i = 0; i < options.length; i++) {
-      const o = options[i];
-      const cnt = counts[i];
-      const opt = el('div', {cls: 'vote-option' + (i === leadIdx && cnt > 0 ? ' leading' : ''),
-        on: {click: () => send({action: 'vote', vote_id: v.id, option: o.label})}});
-      const fill = el('div', {cls: 'vo-fill'});
-      fill.style.width = (cnt / max * 100) + '%';
-      opt.appendChild(fill);
-      const content = el('div', {cls: 'vo-content'});
-      content.appendChild(el('span', {cls: 'vo-label', text: o.label}));
-      const right = el('span', {cls: 'vo-right'});
-      for (const voter of (o.votes || [])) {
-        const d = el('span', {cls: 'vote-dot'});
-        d.style.background = agentColor(voter);
-        d.title = agentName(voter);
-        right.appendChild(d);
-      }
-      right.appendChild(el('span', {text: cnt + ' votes'}));
-      content.appendChild(right);
-      opt.appendChild(content);
-      card.appendChild(opt);
-    }
-    root.appendChild(card);
-  }
-}
-
-function renderRoles() {
-  const root = $('ctl-roles');
-  clear(root);
-  if (!STATE.instances.length) {
-    root.appendChild(el('div', {cls: 'empty-state', text: 'NO INSTANCES'}));
-    return;
-  }
-  for (const inst of STATE.instances) {
-    const card = el('div', {cls: 'role-card'});
-    const nm = el('div', {cls: 'name', text: inst.name || inst.id});
-    nm.style.color = agentColor(inst.id);
-    card.appendChild(nm);
-    const sel = el('select');
-    sel.appendChild(el('option', {text: '— role —', attrs: {value: ''}}));
-    for (const r of ROLE_OPTIONS) {
-      const opt = el('option', {text: r, attrs: {value: r}});
-      if ((inst.role || '').toLowerCase() === r.toLowerCase()) opt.selected = true;
-      sel.appendChild(opt);
-    }
-    sel.addEventListener('change', () => send({action: 'update_role', id: inst.id, role: sel.value}));
-    card.appendChild(sel);
-    const taskTxt = el('div', {cls: 'task', text: inst.task || '— idle —'});
-    card.appendChild(taskTxt);
-    const wlBox = el('div', {cls: 'wl'});
-    const bar = el('div', {cls: 'workload-bar'});
-    const fill = el('div', {cls: 'workload-fill'});
-    fill.style.width = (inst.workload || 0) + '%';
-    fill.style.background = workloadColor(inst.workload);
-    bar.appendChild(fill);
-    wlBox.appendChild(bar);
-    wlBox.appendChild(el('span', {text: (inst.workload || 0) + '%',
-      style: {fontSize: '8px', color: 'var(--dim)'}}));
-    card.appendChild(wlBox);
-    const paused = inst.status === 'paused';
-    card.appendChild(el('button', {cls: 'toggle-btn' + (paused ? ' paused' : ''),
-      text: paused ? 'RESUME' : 'PAUSE',
-      on: {click: () => send({action: 'toggle_instance', id: inst.id})}}));
-    root.appendChild(card);
-  }
-}
-
+// ---------- AUDIT (CONTROL tab) ----------
 function renderAudit() {
   // Filter dropdown
   const filt = $('audit-filter');
@@ -3553,41 +2314,24 @@ function switchTab(tab) {
   localStorage.setItem('am.tab', tab);
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + tab));
-  if (tab === 'plugins') loadPlugins();
   if (tab === 'connect') refreshConnect();
 }
 
-function switchCTab(tab) {
-  STATE.currentCTab = tab;
-  localStorage.setItem('am.ctab', tab);
-  document.querySelectorAll('.ctl-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.ctab === tab));
-  document.querySelectorAll('.ctl-pane').forEach(p => p.classList.toggle('active', p.id === 'ctl-' + tab));
-}
-
 function wire() {
-  // Advanced-tabs hide/show. Persist in localStorage so power users opt in
-  // once and don't have to click ··· on every page load.
-  if (localStorage.getItem('am.showAdv') === '1') {
-    document.body.classList.add('show-adv');
-  }
-  const advBtn = $('adv-toggle');
-  if (advBtn) {
-    advBtn.addEventListener('click', () => {
-      const showing = document.body.classList.toggle('show-adv');
-      localStorage.setItem('am.showAdv', showing ? '1' : '0');
-    });
-  }
-
-  // Tab buttons (skip the ··· toggle — it's not a tab)
+  // Tab buttons
   document.querySelectorAll('.tab-btn').forEach(b => {
-    if (b.classList.contains('adv-toggle')) return;
     b.addEventListener('click', () => switchTab(b.dataset.tab));
   });
-  document.querySelectorAll('.ctl-tab-btn').forEach(b => {
-    b.addEventListener('click', () => switchCTab(b.dataset.ctab));
-  });
+  // CONTROL only has the AUDIT pane now (no subtabs).
+  if (!['chat', 'connect', 'control'].includes(STATE.currentTab)) STATE.currentTab = 'chat';
   switchTab(STATE.currentTab);
-  switchCTab(STATE.currentCTab);
+
+  // Notifications: request permission on the first user interaction.
+  document.addEventListener('pointerdown', requestNotifyPermissionOnce, {once: true});
+  document.addEventListener('keydown', requestNotifyPermissionOnce, {once: true});
+  // Clear the unread title prefix when the tab regains focus.
+  window.addEventListener('focus', clearTitlePrefix);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) clearTitlePrefix(); });
 
   // Compose
   const composeText = $('compose-text');
@@ -3653,105 +2397,22 @@ function wire() {
   $('btn-broadcast').addEventListener('click', () => toggleBroadcast());
   applyBroadcastUI();
 
-  // Emergency stop / resume
-  $('btn-stop').addEventListener('click', () => {
-    confirmModal('EMERGENCY STOP', 'Halt all instances and broadcast STOP?', () => {
-      send({action: 'emergency_stop'});
-      STATE.emergencyStopped = true;
-      showEmergencyBanner();
-    });
-  });
-  $('btn-resume').addEventListener('click', () => {
-    send({action: 'resume_all'});
-    STATE.emergencyStopped = false;
-    clearBanner();
-  });
-
   // Back btn (mobile)
   $('back-btn').addEventListener('click', () => {
     const pane = $('pane-chat');
     pane.classList.remove('show-thread');
-    STATE.showThreadInMobile = false;
   });
 
   // Empty-state CTA
   const emptyNew = $('empty-new-group');
   if (emptyNew) emptyNew.addEventListener('click', () => openGroupEditor(null));
 
-  // Chat clear
+  // Chat clear. NOTE: the broker's clear_messages wipes EVERY thread (it
+  // ignores the thread param), so the prompt must be honest about that.
   $('chat-clear').addEventListener('click', () => {
-    if (STATE.currentThread) {
-      confirmModal('CLEAR MESSAGES', 'Clear message history with ' + agentName(STATE.currentThread) + '?', () => {
-        send({action: 'clear_messages', thread: STATE.currentThread});
-      });
-    }
-  });
-
-  // Create task
-  $('ct-submit').addEventListener('click', () => {
-    const title = $('ct-title').value.trim();
-    if (!title) return;
-    const assignee = $('ct-assignee').value;
-    const priority = $('ct-priority').value;
-    const deps = Array.from($('ct-deps').selectedOptions).map(o => o.value);
-    send({action: 'create_task', title, assignee, priority, deps});
-    $('ct-title').value = '';
-    $('ct-assignee').value = '';
-    $('ct-priority').value = 'medium';
-    Array.from($('ct-deps').options).forEach(o => o.selected = false);
-  });
-  $('tasks-clear-filter').addEventListener('click', () => {
-    STATE.tasksFilter = '';
-    renderTasks();
-    renderSidebar();
-    renderAgentStrip();
-  });
-
-  // Kanban drag/drop
-  document.querySelectorAll('[data-drop]').forEach(zone => {
-    zone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      zone.classList.add('drag-over');
+    confirmModal('CLEAR MESSAGES', 'Clear ALL message history?', () => {
+      send({action: 'clear_messages', thread: STATE.currentThread});
     });
-    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
-    zone.addEventListener('drop', (e) => {
-      e.preventDefault();
-      zone.classList.remove('drag-over');
-      if (STATE.draggingTask) {
-        send({action: 'move_task', id: STATE.draggingTask, status: zone.dataset.drop});
-      }
-    });
-  });
-
-  // Flow form
-  $('fl-submit').addEventListener('click', () => {
-    const name = $('fl-name').value.trim();
-    if (!name) return;
-    const trigger = $('fl-trigger').value.trim();
-    const action_desc = $('fl-action').value.trim();
-    send({action: 'create_flow', name, trigger, action_desc, color: STATE.selectedSwatch});
-    $('fl-name').value = '';
-    $('fl-trigger').value = '';
-    $('fl-action').value = '';
-  });
-  $('tmpl-toggle').addEventListener('click', () => {
-    const sec = $('flow-templates');
-    sec.classList.toggle('collapsed');
-    $('tmpl-toggle').textContent = sec.classList.contains('collapsed') ? 'SHOW' : 'HIDE';
-  });
-
-  // Plugin refresh
-  const plugRefresh = $('plug-refresh');
-  if (plugRefresh) plugRefresh.addEventListener('click', () => loadPlugins(true));
-
-  // Memory form
-  $('mem-submit').addEventListener('click', () => {
-    const key = $('mem-key').value.trim();
-    const value = $('mem-value').value;
-    if (!key || !value) return;
-    send({action: 'memory_write', key, value, mem_type: STATE.selectedMemType});
-    $('mem-key').value = '';
-    $('mem-value').value = '';
   });
 
   // Audit filter
@@ -3817,15 +2478,6 @@ function kbdMoveMessage(delta) {
   kbdSetActiveMessage(next);
 }
 
-function kbdOpenNewTask() {
-  switchTab('tasks');
-  // Focus title input on next frame (so the tab pane is visible)
-  requestAnimationFrame(() => {
-    const input = document.getElementById('ct-title');
-    if (input) { input.focus(); input.select && input.select(); }
-  });
-}
-
 function kbdToggleHelp(force) {
   const help = document.getElementById('kbd-help');
   if (!help) return;
@@ -3886,20 +2538,54 @@ function wireKeyboardShortcuts() {
         if (STATE.currentTab !== 'chat') switchTab('chat');
         kbdMoveMessage(-1);
         break;
-      case 'n':
-        e.preventDefault();
-        kbdOpenNewTask();
-        break;
-      case 't':
-        e.preventDefault();
-        switchTab('tasks');
-        break;
       case 'm':
         e.preventDefault();
         switchTab('chat');
         break;
     }
   });
+}
+
+// ============================================================================
+// NOTIFICATIONS  (no deps — document.title prefix + Notification API)
+// ============================================================================
+const BASE_TITLE = 'AGENT MESH';
+let _unreadNotify = 0;
+
+function requestNotifyPermissionOnce() {
+  try {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function setTitlePrefix() {
+  document.title = _unreadNotify > 0 ? `(${_unreadNotify}) ${BASE_TITLE}` : BASE_TITLE;
+}
+
+function clearTitlePrefix() {
+  _unreadNotify = 0;
+  document.title = BASE_TITLE;
+}
+
+// Called for incoming messages from someone other than 'you'. Only fires the
+// OS notification + title badge when the tab is hidden, so it never nags while
+// the user is actively looking at the dashboard.
+function notifyIncoming(m) {
+  if (!document.hidden) return;
+  _unreadNotify++;
+  setTitlePrefix();
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const who = agentName(m.from) || 'mesh';
+      const n = new Notification(who, {
+        body: (m.text || '').slice(0, 140),
+        tag: 'agent-mesh',
+      });
+      n.onclick = () => { window.focus(); clearTitlePrefix(); n.close(); };
+    }
+  } catch (e) { /* ignore */ }
 }
 
 function sendCurrent() {
@@ -4000,67 +2686,72 @@ function getMeshToken() {
   return t;
 }
 
-function buildInvite(urls, token) {
+function buildInvite(wsUrl, token) {
   const lines = [
     'AGENT MESH — invite',
-    `URL: ${urls.http}`,
-    `WS:  ${urls.ws}`,
+    `WS:  ${wsUrl}`,
   ];
   if (token) lines.push(`TOKEN: ${token}`);
   lines.push('');
   lines.push('Join from Claude Code:');
-  lines.push(`  export BROKER_URL=${urls.ws}${token ? `\n  export MESH_TOKEN=${token}` : ''}`);
+  lines.push(`  export BROKER_URL=${wsUrl}${token ? `\n  export MESH_TOKEN=${token}` : ''}`);
   lines.push('  python3 connect.py');
+  lines.push('');
+  lines.push('Or run ./scripts/mesh-invite on the broker host for a one-paste invite.');
   return lines.join('\n');
 }
 
 let _connectInit = false;
 function refreshConnect() {
-  const urls = brokerUrls();
-  const token = getMeshToken();
-  const lanInput = $('connect-lan-url');
-  const wsInput  = $('connect-ws-url');
-  const tokInput = $('connect-token');
-  const bundle   = $('connect-bundle');
-  if (lanInput) lanInput.value = urls.http;
-  if (wsInput)  wsInput.value  = urls.ws;
-  if (tokInput) tokInput.value = token;
-  if (bundle)   bundle.value   = buildInvite(urls, token);
-
-  const lanHint = $('connect-lan-hint');
-  if (lanHint) {
-    const host = window.location.hostname;
-    const isLocal = host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.') || host.startsWith('10.') || host.startsWith('172.');
-    lanHint.textContent = isLocal
-      ? 'LAN-only — anyone on the same Wi-Fi can use this. For internet access, see EXPOSE TO THE INTERNET.'
-      : `Public host detected (${host}). Anyone on the internet with the token can join.`;
-  }
-  const tokHint = $('connect-token-hint');
-  if (tokHint) {
-    tokHint.innerHTML = token
-      ? `Auth enabled. Anyone joining must present this token.`
-      : `Set <code>MESH_TOKEN</code> on the broker to require auth.`;
-  }
-
-  // QR points at the HTTP dashboard URL with the token in the query string.
-  const qr = $('connect-qr');
-  if (qr) {
-    let qrData = urls.http;
-    if (token) qrData += `/?token=${encodeURIComponent(token)}`;
-    qr.innerHTML = '';
-    const img = document.createElement('img');
-    img.alt = 'Broker invite QR';
-    img.src = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&margin=0&data=${encodeURIComponent(qrData)}`;
-    img.onerror = () => { qr.innerHTML = '<div class="qr-skel">QR generator offline</div>'; };
-    qr.appendChild(img);
-    const cap = $('connect-qr-caption');
-    if (cap) cap.textContent = `Encodes: ${qrData}`;
-  }
-
+  // Ask the broker what to share. It is being extended to return the live
+  // tunnel URL + token via GET /api/share-info; we render whatever it gives
+  // back. The self-computed host:8765 / host:8766 URLs were dead behind the
+  // cloudflared tunnel, so we never fabricate one — fall back to localhost.
   if (!_connectInit) {
     _connectInit = true;
     wireConnect();
   }
+  const fallback = brokerUrls();
+  const fallbackToken = getMeshToken();
+
+  const apply = (info) => {
+    // Tolerate unknown share-info shapes: probe several likely key names.
+    const wsUrl = (info && (info.ws_url || info.wsUrl || info.ws || info.broker_url ||
+                   info.brokerUrl || info.tunnel_ws || info.tunnel)) || fallback.ws;
+    const token = (info && (info.token || info.mesh_token)) ;
+    const tok = (token != null ? String(token) : fallbackToken) || '';
+    const usedFallback = !info || !(info.ws_url || info.wsUrl || info.ws || info.broker_url ||
+                   info.brokerUrl || info.tunnel_ws || info.tunnel);
+
+    const wsInput  = $('connect-ws-url');
+    const tokInput = $('connect-token');
+    const bundle   = $('connect-bundle');
+    if (wsInput)  wsInput.value  = wsUrl;
+    if (tokInput) tokInput.value = tok;
+    if (bundle)   bundle.value   = buildInvite(wsUrl, tok);
+
+    const wsHint = $('connect-ws-hint');
+    if (wsHint) {
+      wsHint.innerHTML = usedFallback
+        ? 'Showing the localhost URL — behind a tunnel, run <code>./scripts/mesh-invite</code> for the reachable address.'
+        : 'Set <code>BROKER_URL</code> to this value before running <code>connect.py</code>.';
+    }
+    const tokHint = $('connect-token-hint');
+    if (tokHint) {
+      tokHint.innerHTML = tok
+        ? 'Auth enabled. Anyone joining must present this token.'
+        : 'Set <code>MESH_TOKEN</code> on the broker to require auth.';
+    }
+    const shareHint = $('connect-share-hint');
+    if (shareHint) {
+      shareHint.innerHTML = 'For a friend, <code>./scripts/mesh-invite</code> is the path that works behind the tunnel.';
+    }
+  };
+
+  fetch('/api/share-info', {cache: 'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(apply)
+    .catch(() => apply(null));
 }
 
 function wireConnect() {
@@ -4130,7 +2821,8 @@ function wireConnect() {
         const httpPort = String(Math.max(1, parseInt(port, 10) - 1));
         const dashUrl = `${secure ? 'https' : 'http'}://${host}:${httpPort}/${tok ? `?token=${encodeURIComponent(tok)}` : ''}`;
         status.className = 'info';
-        status.innerHTML = `Opening <code>${dashUrl}</code>…`;
+        // textContent (not innerHTML) — dashUrl contains user-typed input.
+        status.textContent = `Opening ${dashUrl}…`;
         setTimeout(() => { window.location.href = dashUrl; }, 600);
       } catch (e) {
         status.className = 'err';
@@ -4174,6 +2866,7 @@ async function reconcileFromBroker() {
     if (!r.ok) return;
     const data = await r.json();
     let changed = false;
+    let presenceChanged = false;
     const known = new Set(STATE.messages.map(m => m.id).filter(Boolean));
     for (const m of (data.messages || [])) {
       if (!m.id || known.has(m.id)) continue;
@@ -4188,7 +2881,19 @@ async function reconcileFromBroker() {
       STATE.channels = data.channels;
       changed = true;
     }
-    if (changed) {
+    // Server-authoritative presence: apply whatever /api/state returns so the
+    // sidebar / "N online" chip / conversation dots self-heal even when the WS
+    // is down. Without this the presence froze at page-load.
+    if (Array.isArray(data.instances) &&
+        JSON.stringify(data.instances) !== JSON.stringify(STATE.instances)) {
+      STATE.instances = data.instances;
+      presenceChanged = true;
+    }
+    if (presenceChanged) {
+      renderSidebar();
+      renderAgentStrip();
+    }
+    if (changed || presenceChanged) {
       renderChat();
       renderConvList();
       renderTabBadges();
@@ -4208,7 +2913,7 @@ function boot() {
   apiChannels();
 
   setInterval(() => {
-    if (STATE.currentTab === 'chat' || STATE.currentTab === 'tasks') {
+    if (STATE.currentTab === 'chat') {
       renderSidebar();
     }
   }, 30000);

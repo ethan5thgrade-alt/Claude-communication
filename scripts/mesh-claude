@@ -14,8 +14,7 @@
 # First launch per role: run /login inside the session to sign into THAT
 # account's subscription. Credentials persist in the config dir afterwards.
 #
-# This is the interactive counterpart to launch-multi-account.sh (which is
-# for detached/tmux fleets). One terminal = one role = one subscription.
+# One terminal = one role = one subscription.
 
 set -euo pipefail
 

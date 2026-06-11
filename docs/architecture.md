@@ -6,9 +6,10 @@ roles in the system:
 
 - **Broker** (`broker.py`) — single process running on the host machine. Owns
   the persisted state and relays messages between everyone else.
-- **Instance** (`connect.py`) — a Claude Code session that registers itself
-  over a WebSocket and can send/receive messages, status updates, tasks,
-  memory writes, and approval requests.
+- **Instance** — a Claude Code session that registers itself over a WebSocket
+  and can send/receive messages, status updates, and audit log entries.
+  Sessions are wired in via `scripts/mesh-claude`; a friend on another machine
+  joins with `mesh-connect.py`.
 - **UI** (`index.html`) — a browser client that connects to the broker over a
   separate WebSocket. Used by the human operator from a phone or laptop.
 
@@ -40,26 +41,23 @@ to `state.json` after every mutation (debounced by ~0.5s via
 `schedule_write`). On startup the broker loads `state.json` and falls back to
 an empty state with a `.bak` copy if the file is corrupt.
 
-The state schema (see `empty_state` in `broker.py`):
+The state schema (see the empty-state initializer in `broker.py`):
 
 ```python
 {
   "messages":  [...],   # all relayed messages
-  "tasks":     [...],   # Kanban-style task list
-  "memory":    [...],   # shared key/value entries
-  "flows":     [...],   # trigger/action rules
-  "approvals": [...],   # human-in-the-loop approvals
-  "votes":     [...],   # consensus polls
-  "audit":     [...],   # append-only audit log (capped at 5000)
-  "instances_meta": {}, # persisted per-instance role/paused/name/project
-  "counters":  {"M":0,"T":0,"F":0,"AP":0,"V":0,"A":0},
+  "audit":     [...],   # append-only audit log (capped at 1000 in-state)
+  "channels":  [...],   # named server-side member groups
+  "instances_meta": {}, # persisted per-instance role/name/project
+  "counters":  {...},   # monotonic id counters
 }
 ```
 
-Instances that are currently disconnected still appear in
-`instances_meta` so the sidebar can show their last known role and pause
-state. Messages destined for an offline instance go into a per-instance
-backlog `deque` (capped at 100) and are flushed on reconnect.
+The audit log is trimmed to 1000 entries in `state.json`; daily backups under
+`~/.agent-mesh/backups/` keep the full history. Instances that are currently
+disconnected still appear in `instances_meta` so the sidebar can show their
+last known role. Messages destined for an offline instance go into a
+per-instance byte-budgeted backlog (256KB) and are flushed on reconnect.
 
 ## Sequence diagrams
 
@@ -75,8 +73,6 @@ sequenceDiagram
     CC->>B: WS connect ws://host:8766
     CC->>B: {type: "register", id, name, project}
     B->>B: update instances + instances_meta, audit "register"
-    B-->>CC: {type: "memory_init", memory: [...]}
-    B-->>CC: {type: "tasks_init", tasks: [open tasks assigned to cc1]}
     alt backlog non-empty
         B-->>CC: {type: "backlog", messages: [...]}
     end
@@ -84,9 +80,9 @@ sequenceDiagram
     B-->>UI: {type: "state_update", delta: {instances}}
 ```
 
-The first three init payloads (`memory_init`, `tasks_init`, optional
-`backlog`) make registration idempotent and resumable. A re-launched agent
-sees everything assigned to it without needing to query.
+The optional `backlog` payload makes registration resumable: a re-launched
+agent receives any messages that arrived while it was offline without needing
+to query.
 
 ### Message relay (instance to instance)
 
@@ -110,32 +106,6 @@ sequenceDiagram
 
 The UI always gets a copy so the human sees the relayed traffic in the chat
 thread (rendered as `[RELAY] cc1→cc2`).
-
-### Task delegation
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant CC1 as Creator (cc1)
-    participant B as Broker
-    participant CC2 as Assignee (cc2)
-
-    CC1->>B: {type: "task_create", title, assignee: "cc2", priority, deps}
-    B->>B: cycle-check + append to state.tasks, audit
-    alt cc2 online
-        B-->>CC2: {type: "task_assigned", task}
-    else cc2 offline
-        B->>B: backlog["cc2"].append(...)
-    end
-    Note over CC2: cc2 works on the task...
-    CC2->>B: {type: "task_done", id, result}
-    B->>B: mark Done, record done_by/done_at, audit
-    B-->>CC1: {type: "task_completed", task}
-```
-
-If `cc2` reconnects before calling `task_done`, the `tasks_init` payload it
-gets at registration includes the open assignment, so it never loses the
-hand-off.
 
 ### Channel fan-out (server-side groups)
 
@@ -183,11 +153,12 @@ server. There is no cross-broker federation — every mesh is a single host.
 
 ## File map
 
-| File         | Role                                                      |
-|--------------|-----------------------------------------------------------|
-| `broker.py`  | All server-side logic: WS handlers, REST, state, audit    |
-| `connect.py` | Instance client + background asyncio thread + helpers     |
-| `cli.py`     | Thin REST sender (`send`, `status`, `state`, `clear`)     |
-| `index.html` | Full single-file UI (chat, kanban, memory, flows, audit)  |
-| `state.json` | Persisted state, created on first write                   |
-| `tests/`     | pytest suite, runs broker on ports 18765/18766            |
+| File                | Role                                               |
+|---------------------|----------------------------------------------------|
+| `broker.py`         | All server-side logic: WS handlers, REST, state, audit |
+| `scripts/mesh`      | In-session CLI (send / inbox / who / hook)         |
+| `scripts/mesh-claude` | Launch a Claude Code session wired into the mesh |
+| `mesh-connect.py`   | Zero-dep friend client for another machine         |
+| `index.html`        | Single-file UI (chat, channels, audit)             |
+| `state.json`        | Persisted state, created on first write            |
+| `tests/`            | pytest suite, runs broker on OS-assigned free ports |

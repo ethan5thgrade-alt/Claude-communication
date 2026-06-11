@@ -6,8 +6,8 @@ metrics, backups, and the common restart / clear / reset rituals.
 ## Process layout
 
 The broker is a single Python process. When installed via the launchd
-template (batch 7), it runs as `com.voidlabs.agent-mesh` under the current
-user's `LaunchAgents`. Otherwise it's whatever shell you launched it from.
+template, it runs as `com.voidlabs.agent-mesh` under the current user's
+`LaunchAgents`. Otherwise it's whatever shell you launched it from.
 
 ```
 broker.py  (1 process)
@@ -20,23 +20,26 @@ Both ports bind `0.0.0.0`.
 
 ## Log paths
 
-When run from the launchd plist:
+The plist sets `MESH_LOG_FILE=~/Library/Logs/agent-mesh/broker.log`, which
+activates the broker's built-in in-process rotation (10MB × 5 files). The
+launchd `StandardOutPath` / `StandardErrorPath` are pointed at `/dev/null`
+because the rotating file owns the real log.
 
-| File                                         | Contents                          |
-|----------------------------------------------|-----------------------------------|
-| `~/Library/Logs/agent-mesh/out.log`          | stdout — banner + INFO logs       |
-| `~/Library/Logs/agent-mesh/err.log`          | stderr — tracebacks, ERROR logs   |
+| File                                       | Contents                          |
+|--------------------------------------------|-----------------------------------|
+| `~/Library/Logs/agent-mesh/broker.log`     | broker log (rotated 10MB × 5)     |
 
-Tail them live:
+Tail it live:
 
 ```bash
-tail -F ~/Library/Logs/agent-mesh/out.log ~/Library/Logs/agent-mesh/err.log
+tail -F ~/Library/Logs/agent-mesh/broker.log
 ```
 
 Or, if you installed the Makefile, `make tail-logs` does the same.
 
-When run interactively (`python3 broker.py`), logs go to your terminal. Use
-`python3 -u broker.py` for unbuffered output if you're piping to a file.
+When run interactively (`python3 broker.py`) without `MESH_LOG_FILE`, logs go
+to your terminal. Use `python3 -u broker.py` for unbuffered output if you're
+piping to a file.
 
 ## State + backups
 
@@ -45,13 +48,13 @@ When run interactively (`python3 broker.py`), logs go to your terminal. Use
 | `state.json`                      | Current persisted state                |
 | `state.json.tmp`                  | Atomic write staging file              |
 | `state.json.bak`                  | Backup written when load fails         |
-| `state.json.v<n>.bak`             | Pre-migration backup (batch 5)         |
-| `state.json.YYYY-MM-DD.bak`       | Daily backup, last 7 kept (batch 5)    |
+| `~/.agent-mesh/backups/state.json.YYYY-MM-DD.bak` | Daily backup, last 7 kept |
 
-To take a manual snapshot before doing something risky:
+To take a manual snapshot before doing something risky (from the clone dir,
+`~/code/Claude-communication`):
 
 ```bash
-cp ~/agent-mesh/state.json ~/agent-mesh/state.json.$(date +%F).manual
+cp state.json state.json.$(date +%F).manual
 ```
 
 ## Health endpoint
@@ -119,30 +122,22 @@ per-instance backlogs that hadn't been written yet is dropped.
 ### Clear messages
 
 ```bash
-curl -X POST http://localhost:8765/api/clear
-# or
-python3 cli.py clear
+curl -X POST http://localhost:8765/api/clear -H "X-Mesh-Token: $MESH_TOKEN"
 ```
 
-This removes the chat history but keeps tasks, memory, audit, and approvals.
+This removes the chat history but keeps channels and the audit log.
 
 ### Reset everything (nuclear)
 
-Stop the broker, then:
+Stop the broker, then (from the clone dir, `~/code/Claude-communication`):
 
 ```bash
-mv ~/agent-mesh/state.json ~/agent-mesh/state.json.$(date +%F).snapshot
+mv state.json state.json.$(date +%F).snapshot
 python3 broker.py
 ```
 
 The broker comes back up with an empty state. Instances will re-register as
 they reconnect.
-
-### Quiesce all instances
-
-Use the UI's "Emergency Stop" button (or `POST /api/emergency_stop`). The
-broker sends `STOP — await instructions` to every connected instance and
-records an audit entry. Resume with the matching "Resume All" button.
 
 ### Drain backlog for one instance
 
@@ -152,11 +147,8 @@ stdout), then disconnect.
 
 ## Capacity notes
 
-- The audit log self-trims at 5000 entries (`broker.py:120`).
-- Per-instance backlog is a `deque(maxlen=100)` (`broker.py:62`) — older
-  messages are silently dropped.
-- The UI bootstrap payload sends the last 200 messages and last 200 audit
-  entries; older entries are only visible via `/api/state`.
-- `state.json` typically stays under 1 MB even after weeks of use. If it
-  grows past 10 MB you probably have something writing huge values into
-  `broker_memory(...)`.
+- The audit log is capped at 1000 entries in `state.json`; daily backups under
+  `~/.agent-mesh/backups/` preserve the full history.
+- Per-instance backlog is byte-budgeted (256KB) — once a slow instance's queue
+  exceeds the budget, the oldest queued messages are dropped.
+- `state.json` typically stays well under 1 MB even after weeks of use.

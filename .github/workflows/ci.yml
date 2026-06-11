@@ -18,8 +18,8 @@ jobs:
           python-version: "3.9"
 
       - name: Install runtime dependencies
-        # README quickstart: websockets + aiohttp are required, zeroconf optional.
-        # Without these, the import-smoke step fails on `import aiohttp` (broker.py:23).
+        # README quickstart: websockets + aiohttp are required.
+        # Without these, the import-smoke step fails on `import aiohttp`.
         run: pip install websockets aiohttp
 
       - name: Install test dependencies
@@ -31,10 +31,8 @@ jobs:
 
       - name: Python syntax check
         run: |
-          python -m py_compile broker.py
-          python -m py_compile cli.py
-          python -m py_compile connect.py
-          find scripts tests clients -name '*.py' -print0 \
+          python -m py_compile broker.py mesh-connect.py
+          find scripts tests examples -name '*.py' -print0 \
             | xargs -0 -n1 python -m py_compile
 
       - name: Bash script syntax check
@@ -51,8 +49,7 @@ jobs:
             python -c "
           import json, sys
           s = json.load(open('state.json'))
-          required = ['schema_version', 'messages', 'tasks', 'memory',
-                      'flows', 'approvals', 'votes', 'audit', 'channels']
+          required = ['schema_version', 'messages', 'audit', 'channels']
           missing = [k for k in required if k not in s]
           if missing: print('missing keys:', missing); sys.exit(1)
           print('state.json schema OK, version=' + str(s['schema_version']))
@@ -72,6 +69,12 @@ jobs:
                 'INSTANCE_PORT=' + str(broker.INSTANCE_PORT),
                 'MAX_MESSAGES_IN_STATE=' + str(broker.MAX_MESSAGES_IN_STATE))
           "
+
+      - name: pytest
+        run: python -m pytest -q
+
+      - name: REST smoke (alt ports, self-cleaning)
+        run: PYTHON_BIN=python scripts/smoke.sh
 
       - name: pre-commit (if installed)
         run: |

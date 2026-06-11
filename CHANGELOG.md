@@ -1,12 +1,29 @@
 # Changelog
 
-All notable changes to Claude Mesh (the broker, bot, dashboard, and CLI).
+All notable changes to Agent Mesh (the broker, dashboard, and CLI).
 
 The project loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Pre-1.0; expect
 small breaking changes between minor versions.
 
 ## [Unreleased]
+
+### Personal-scope refactor (2026-06-10)
+- **Stripped the broker to a messaging core**: messaging, channels, audit, and
+  instances. Removed the tasks/votes/approvals/flows/memory/teams/plugins/mDNS/
+  workspaces subsystems.
+- **Deleted the SaaS + legacy layer**: `web/` (Next.js multi-tenant shell),
+  `supabase/` schema, the `claude-talk`/`claude-talk-bot` harness,
+  `launch-multi-account.sh`, `e2e_test.py`, the TypeScript `clients/`,
+  `connect.py`/`cli.py`, and the demo workflow. Entry points are now
+  `scripts/mesh`, `scripts/mesh-claude`, `scripts/mesh-invite`, and
+  `mesh-connect.py`.
+- **Security**: removed the committed `MESH_TOKEN` from the launchd plist (the
+  broker now reads it from `~/.agent-mesh/session.env`), pointed launchd log
+  sinks at `/dev/null` in favor of the broker's own rotating
+  `MESH_LOG_FILE`, and the token is being rotated.
+- **CI/Makefile**: `make` uses `python3` (was `python3.13`); CI now actually
+  runs pytest + the REST smoke script. Docs reconciled to the shipped reality.
 
 ### Added
 - **Welcome panel** in the dashboard chat pane: when no instances are online,

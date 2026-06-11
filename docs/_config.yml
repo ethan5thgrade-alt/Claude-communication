@@ -11,8 +11,6 @@ permalink: /:title/
 # Don't process these as Jekyll templates.
 include:
   - index.html
-  - getting-started.html
-  - examples.html
 
 # Markdown via kramdown is fine for the rest.
 markdown: kramdown

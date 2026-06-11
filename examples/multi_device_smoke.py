@@ -14,7 +14,6 @@ What it tests:
 What it does NOT test:
   - Actual network reachability across machines (single-host simulation)
   - LLM bot replies
-  - mDNS auto-discovery (use `python3 cli.py discover` for that)
 
 Zero LLM cost — pure protocol exercise.
 """
@@ -66,9 +65,9 @@ async def main() -> int:
     print(f"    ws_url   = {info.get('ws_url')}")
     print(f"    token    = {info.get('token') or '(none)'}")
     if not info.get("http_url") or "localhost" in str(info.get("http_url", "")):
-        print("  ⚠  http_url is localhost — friend on different device cannot reach it.")
+        print("  warning: http_url is localhost — friend on different device cannot reach it.")
         print("     For LAN: bind to 0.0.0.0 (broker already does), share LAN IP manually.")
-        print("     For internet: expose via ngrok or similar.")
+        print("     For internet: expose port 8766 via a cloudflared tunnel.")
     print()
 
     # ---- simulate two remote devices ----
@@ -123,7 +122,7 @@ async def main() -> int:
     print("=== PASS: 2-device flow works against this broker ===")
     print("To do this for real across two machines:")
     print(f"  Friend A: python3 broker.py    (already running on {info.get('http_url')})")
-    print(f"  Friend B: BROKER_URL={info.get('ws_url')} python3 connect.py")
+    print(f"  Friend B: BROKER_URL={info.get('ws_url')} python3 mesh-connect.py")
     print("  Both: open the dashboard at the http_url above")
     return 0
 

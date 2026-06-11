@@ -1,7 +1,7 @@
 # agent-mesh Makefile
 # Run `make help` (or just `make`) for the list of targets.
 
-PYTHON       := python3.13
+PYTHON       ?= python3
 REPO_DIR     := $(shell pwd)
 PLIST_NAME   := com.voidlabs.agent-mesh.plist
 PLIST_SRC    := $(REPO_DIR)/$(PLIST_NAME)
@@ -19,10 +19,10 @@ help:
 	@echo "  make install-service     Install + start the launchd service"
 	@echo "  make uninstall-service   Stop + remove the launchd service"
 	@echo "  make restart-service     Unload then load the launchd service"
-	@echo "  make tail-logs           Tail the launchd stdout/stderr logs"
+	@echo "  make tail-logs           Tail the rotating broker log"
 	@echo "  make status              Show launchctl status for the service"
 	@echo ""
-	@echo "Logs: $(LOG_DIR)/out.log  $(LOG_DIR)/err.log"
+	@echo "Log: $(LOG_DIR)/broker.log"
 
 dev:
 	$(PYTHON) -u broker.py
@@ -40,7 +40,7 @@ install-service:
 	@echo "Loaded $(LABEL). Current status:"
 	@launchctl list | grep $(LABEL) || echo "(not yet listed — give it a sec, then run 'make status')"
 	@echo ""
-	@echo "Logs: $(LOG_DIR)/out.log  $(LOG_DIR)/err.log"
+	@echo "Log: $(LOG_DIR)/broker.log"
 
 uninstall-service:
 	@launchctl unload $(PLIST_DEST) 2>/dev/null || true
@@ -54,8 +54,8 @@ restart-service:
 
 tail-logs:
 	@mkdir -p $(LOG_DIR)
-	@touch $(LOG_DIR)/out.log $(LOG_DIR)/err.log
-	tail -F $(LOG_DIR)/out.log $(LOG_DIR)/err.log
+	@touch $(LOG_DIR)/broker.log
+	tail -F $(LOG_DIR)/broker.log
 
 status:
 	@launchctl list | grep $(LABEL) || echo "$(LABEL) not loaded"

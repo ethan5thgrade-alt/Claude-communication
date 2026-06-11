@@ -113,11 +113,11 @@ code=$(curl -s -o /tmp/smoke_status.json -w '%{http_code}' "${BASE}/api/status")
 grep -q '"instances"' /tmp/smoke_status.json || fail "/api/status missing 'instances' key"
 ok "GET /api/status (200)"
 
-# 2. /api/state — must return 200 + JSON with messages/tasks
+# 2. /api/state — must return 200 + JSON with the kept core collections
 code=$(curl -s -o /tmp/smoke_state.json -w '%{http_code}' "${BASE}/api/state")
 [[ "${code}" == "200" ]] || fail "/api/state returned ${code}"
 grep -q '"messages"' /tmp/smoke_state.json || fail "/api/state missing 'messages' key"
-grep -q '"tasks"' /tmp/smoke_state.json || fail "/api/state missing 'tasks' key"
+grep -q '"channels"' /tmp/smoke_state.json || fail "/api/state missing 'channels' key"
 ok "GET /api/state (200)"
 
 # 3. /api/send — must return 200

@@ -7,14 +7,19 @@ hooks. Zero dependencies (urllib only). Auth + identity come from env, with
 
 Commands:
   mesh send <to> <text...>     send a message (to = all | <instance-id> | channel:<id>)
+  mesh send <to> -             send a message whose body is read from stdin
+  mesh ask <peer> <q...>       send a question and block until <peer> replies (--timeout SECS)
   mesh inbox [--peek]          print unread messages for me; advance cursor (--peek: don't)
-  mesh hook                    UserPromptSubmit hook mode: print unread block, always exit 0
+  mesh hook                    UserPromptSubmit hook mode: heartbeat + print unread, exit 0
   mesh wait [--timeout SECS]   block until a new message for me arrives, print it, exit 0
-  mesh who                     list known instances
+  mesh focus <text...>         set what this session is working on (shows in `who`/dashboard)
+  mesh handoff <text...|->      leave a note your next session under this id reads on startup
+  mesh who                     list known instances (with focus + last-seen)
   mesh status                  broker health + my identity as seen by this tool
+  mesh doctor                  full self-check: broker, ports, launchd, tunnel, token
 
 Identity:  INSTANCE_ID (required for inbox/hook/wait; default cc-local)
-Broker:    MESH_HTTP (default http://localhost:8765)
+Broker:    MESH_HTTP (default http://127.0.0.1:8765)
 Auth:      MESH_TOKEN env, else parsed from ~/.agent-mesh/session.env
 Cursor:    ~/.agent-mesh/cursor-<INSTANCE_ID>  (last seen numeric message id)
 """
@@ -23,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -33,13 +39,11 @@ SESSION_ENV = Path.home() / ".agent-mesh" / "session.env"
 CURSOR_DIR = Path.home() / ".agent-mesh"
 
 
-def _token() -> str | None:
-    tok = os.environ.get("MESH_TOKEN")
-    if tok:
-        return tok
+def _session_env(key: str) -> str | None:
+    """Read KEY=value from ~/.agent-mesh/session.env (None if absent)."""
     try:
         for line in SESSION_ENV.read_text().splitlines():
-            m = re.match(r"^MESH_TOKEN=(\S+)", line.strip())
+            m = re.match(rf"^{key}=(\S+)", line.strip())
             if m:
                 return m.group(1)
     except OSError:
@@ -47,7 +51,11 @@ def _token() -> str | None:
     return None
 
 
-BASE = os.environ.get("MESH_HTTP", "http://localhost:8765").rstrip("/")
+def _token() -> str | None:
+    return os.environ.get("MESH_TOKEN") or _session_env("MESH_TOKEN")
+
+
+BASE = os.environ.get("MESH_HTTP", "http://127.0.0.1:8765").rstrip("/")
 TOKEN = _token()
 ME = os.environ.get("INSTANCE_ID", "cc-local")
 
@@ -88,9 +96,63 @@ def _write_cursor(n: int) -> None:
         pass
 
 
-def _fetch_messages(limit: int = 200) -> list[dict]:
-    res = _req(f"/api/messages?limit={limit}")
+def _fetch_messages(limit: int = 200, timeout: float = 5.0) -> list[dict]:
+    res = _req(f"/api/messages?limit={limit}", timeout=timeout)
     return res.get("messages", [])
+
+
+def _post_presence(**fields) -> None:
+    """Fire-and-forget heartbeat to /api/presence. Never raises, short timeout
+    so a wedged broker can't slow a prompt. None-valued fields are dropped."""
+    body = {"id": ME}
+    body.update({k: v for k, v in fields.items() if v is not None})
+    try:
+        _req("/api/presence", body, timeout=2.0)
+    except Exception:
+        pass
+
+
+def _my_handoff() -> str:
+    """The handoff note left for this instance id, if any."""
+    try:
+        res = _req("/api/instances", timeout=2.0)
+        inst = res if isinstance(res, list) else res.get("instances", [])
+        for m in inst:
+            if isinstance(m, dict) and m.get("id") == ME:
+                return m.get("handoff", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _hook_fail_path() -> Path:
+    return CURSOR_DIR / f"hook-fails-{ME}"
+
+
+def _bump_hook_fail(reason: str) -> None:
+    """Count consecutive hook failures; surface ONE line at 3 (then every 5th)
+    so a silently-dead broker can't go unnoticed for weeks."""
+    try:
+        p = _hook_fail_path()
+        try:
+            n = int(p.read_text().strip())
+        except (OSError, ValueError):
+            n = 0
+        n += 1
+        CURSOR_DIR.mkdir(mode=0o700, exist_ok=True)
+        p.write_text(str(n))
+        if n == 3 or (n > 3 and n % 5 == 0):
+            print(f"[agent-mesh] broker unreachable for {n} prompts ({reason}) — "
+                  f"run: scripts/mesh doctor")
+    except OSError:
+        pass
+
+
+def _clear_hook_fail() -> None:
+    try:
+        _hook_fail_path().unlink()
+    except OSError:
+        pass
 
 
 def _unread(msgs: list[dict]) -> tuple[list[dict], int]:
@@ -118,9 +180,16 @@ def _fmt(m: dict) -> str:
 
 def cmd_send(args: list[str]) -> int:
     if len(args) < 2:
-        print("usage: mesh send <to> <text...>", file=sys.stderr)
+        print("usage: mesh send <to> <text...>  (text '-' reads stdin)", file=sys.stderr)
         return 1
-    to, text = args[0], " ".join(args[1:])
+    to = args[0]
+    if len(args) == 2 and args[1] == "-":
+        text = sys.stdin.read().strip()
+    else:
+        text = " ".join(args[1:])
+    if not text:
+        print("error: empty message", file=sys.stderr)
+        return 1
     res = _req("/api/send", {"to": to, "text": text, "from": ME})
     ok = res.get("ok", bool(res.get("message")))
     mid = (res.get("message") or {}).get("id") or res.get("channel", "")
@@ -142,21 +211,37 @@ def cmd_inbox(args: list[str]) -> int:
 
 def cmd_hook(_args: list[str]) -> int:
     """UserPromptSubmit hook: stdout becomes context. NEVER block the prompt."""
+    # Heartbeat first — cheap, fire-and-forget, makes this REST-only session
+    # visible in `mesh who` and the dashboard without holding a WebSocket.
+    _post_presence()
     try:
-        if not _cursor_path().exists():
-            # First run for this instance: seed past history so we never dump
-            # weeks of old messages into a fresh session's context.
-            _, hi = _unread(_fetch_messages())
+        first_run = not _cursor_path().exists()
+        msgs = _fetch_messages(timeout=2.0)
+        if first_run:
+            # Seed past history so we never dump weeks of old messages into a
+            # fresh session — but DO surface a handoff note from the previous
+            # session under this id, then clear it so it shows only once.
+            _, hi = _unread(msgs)
             _write_cursor(hi)
+            note = _my_handoff()
+            if note:
+                print(f"[agent-mesh] handoff from your previous {ME} session:\n{note}")
+                _post_presence(handoff="")
+            _clear_hook_fail()
             return 0
-        mine, hi = _unread(_fetch_messages())
+        mine, hi = _unread(msgs)
         if mine:
             lines = "\n".join(_fmt(m) for m in mine)
             print(f"[agent-mesh] {len(mine)} new message(s) for {ME}:\n{lines}\n"
                   f"(reply with: scripts/mesh send <instance-id|all> <text>)")
             _write_cursor(hi)
+        _clear_hook_fail()
+    except urllib.error.HTTPError as e:
+        reason = ("token rejected — re-source ~/.agent-mesh/session.env"
+                  if e.code in (401, 403) else f"HTTP {e.code}")
+        _bump_hook_fail(reason)
     except Exception:
-        pass  # broker down / auth issue → stay silent, never break the session
+        _bump_hook_fail("broker unreachable")
     return 0
 
 
@@ -185,6 +270,62 @@ def cmd_wait(args: list[str]) -> int:
         time.sleep(3)
 
 
+def cmd_ask(args: list[str]) -> int:
+    """Send a question to one peer and block until THAT peer replies to me.
+    Unlike `wait`, it ignores unrelated traffic and never touches the inbox
+    cursor (so the hook still surfaces other messages later)."""
+    timeout = 120.0
+    if "--timeout" in args:
+        i = args.index("--timeout")
+        try:
+            timeout = float(args[i + 1])
+            args = args[:i] + args[i + 2:]
+        except (IndexError, ValueError):
+            print("usage: mesh ask <peer> <question...> [--timeout SECS]", file=sys.stderr)
+            return 1
+    if len(args) < 2:
+        print("usage: mesh ask <peer> <question...> [--timeout SECS]", file=sys.stderr)
+        return 1
+    peer = args[0]
+    question = sys.stdin.read().strip() if args[1] == "-" else " ".join(args[1:])
+    # Baseline high-water mark BEFORE sending, so we only match a fresh reply.
+    try:
+        seen_hi = max((_msg_num(m.get("id")) for m in _fetch_messages()), default=-1)
+    except Exception:
+        seen_hi = -1
+    _req("/api/send", {"to": peer, "text": f"[ask] {question}", "from": ME})
+    start = time.time()
+    while True:
+        try:
+            for m in _fetch_messages():
+                if _msg_num(m.get("id")) <= seen_hi:
+                    continue
+                if m.get("from") == peer and m.get("to") in (ME, "all"):
+                    print(_fmt(m))
+                    return 0
+        except Exception:
+            pass
+        if time.time() - start > timeout:
+            print(f"(no reply from {peer} within {int(timeout)}s)")
+            return 2
+        time.sleep(2)
+
+
+def cmd_focus(args: list[str]) -> int:
+    text = " ".join(args)
+    _req("/api/presence", {"id": ME, "task": text})
+    print(f"focus set: {text}" if text else "focus cleared")
+    return 0
+
+
+def cmd_handoff(args: list[str]) -> int:
+    text = sys.stdin.read().strip() if (args and args[0] == "-") else " ".join(args)
+    _req("/api/presence", {"id": ME, "handoff": text})
+    print(f"handoff saved ({len(text)} chars) — your next {ME} session sees it"
+          if text else "handoff cleared")
+    return 0
+
+
 def cmd_who(_args: list[str]) -> int:
     res = _req("/api/instances")
     inst = res.get("instances", res) if isinstance(res, dict) else res
@@ -193,14 +334,78 @@ def cmd_who(_args: list[str]) -> int:
     if not inst:
         print("(no instances known to the broker)")
     for m in inst:
-        if isinstance(m, dict):
-            iid = m.get("id", "?")
-            name = m.get("name", iid)
-            online = "online" if m.get("online") or m.get("connected") else "offline"
-            print(f"{iid}  ({name}, {online})")
-        else:
+        if not isinstance(m, dict):
             print(m)
+            continue
+        iid = m.get("id", "?")
+        name = m.get("name", iid)
+        online = m.get("online") or m.get("connected")
+        state = "online" if online else "offline"
+        extra = []
+        if m.get("task"):
+            extra.append(f"task: {m['task']}")
+        if not online and m.get("last_seen"):
+            extra.append(f"seen {m['last_seen'][:19]}")
+        suffix = "  — " + "; ".join(extra) if extra else ""
+        print(f"{iid}  ({name}, {state}){suffix}")
     return 0
+
+
+BROKER_LABEL = "com.voidlabs.agent-mesh"
+TUNNEL_LABEL = "com.voidlabs.agent-mesh-tunnel"
+BROKER_PLIST = "~/Library/LaunchAgents/com.voidlabs.agent-mesh.plist"
+
+
+def _run(argv: list[str], timeout: float = 10.0) -> tuple[int, str]:
+    """Run a command; (returncode, stdout). Never raises (127, '' on failure)."""
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+
+
+def _port_owners(port: int) -> list[tuple[int, str, str]]:
+    """(pid, command, bind-address) per LISTEN socket on port, via lsof.
+    One entry per socket, so an IPv4 broker + IPv6 squatter both show up."""
+    _, out = _run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpcn"])
+    owners, pid, cmd = [], -1, "?"
+    for line in out.splitlines():
+        tag, val = line[:1], line[1:]
+        if tag == "p":
+            pid = int(val)
+        elif tag == "c":
+            cmd = val
+        elif tag == "n":
+            owners.append((pid, cmd, val))
+    return owners
+
+
+def _launchd_pid(label: str) -> int | None:
+    """PID of a loaded launchd job (None if not loaded / not running)."""
+    rc, out = _run(["launchctl", "list", label])
+    m = re.search(r'"PID"\s*=\s*(\d+)', out)
+    return int(m.group(1)) if rc == 0 and m else None
+
+
+def _diagnose_port(port: int = 8765) -> None:
+    """Explain why the health check failed: squatter vs nothing listening."""
+    owners = _port_owners(port)
+    if not owners:
+        print(f"        nothing is listening on port {port} — start the broker:")
+        print(f"        launchctl load {BROKER_PLIST}")
+        return
+    broker_pid = _launchd_pid(BROKER_LABEL)
+    for pid, cmd, addr in owners:
+        who = "broker" if pid == broker_pid else "NOT the broker"
+        print(f"        {addr}  pid {pid} ({cmd}) — {who}")
+    squatters = [(p, c) for p, c, _ in owners if p != broker_pid]
+    if squatters:
+        pid, cmd = squatters[0]
+        print(f"        another process is squatting on port {port} — kill {pid} ({cmd})")
+    else:
+        print(f"        broker (pid {broker_pid}) owns the port but answered wrong — "
+              f"check ~/Library/Logs/agent-mesh/err.log")
 
 
 def cmd_status(_args: list[str]) -> int:
@@ -209,11 +414,122 @@ def cmd_status(_args: list[str]) -> int:
     print(f"token:  {'set' if TOKEN else 'MISSING'}")
     try:
         h = _req("/api/health")
-        print(f"health: {json.dumps(h)}")
-        return 0
+        if isinstance(h, dict) and h.get("ok"):
+            print(f"health: {json.dumps(h)}")
+            return 0
+        problem = f"NOT the broker (unexpected JSON: {json.dumps(h)[:120]})"
+    except urllib.error.HTTPError as e:
+        problem = f"NOT the broker (HTTP {e.code}, not the broker's health JSON)"
+    except json.JSONDecodeError:
+        problem = "NOT the broker (non-JSON response, e.g. HTML)"
     except Exception as e:
-        print(f"health: UNREACHABLE ({e})")
-        return 1
+        problem = f"UNREACHABLE ({e})"
+    print(f"health: {problem}")
+    m = re.search(r":(\d+)$", BASE)
+    _diagnose_port(int(m.group(1)) if m else 8765)
+    return 1
+
+
+def cmd_doctor(_args: list[str]) -> int:
+    """Full self-check: one PASS/FAIL line per check, fix hint on FAIL."""
+    results: list[bool] = []
+
+    def check(name: str, ok: bool, detail: str, fix: str = "") -> None:
+        results.append(ok)
+        print(f"{'PASS' if ok else 'FAIL'} {name}: {detail}")
+        if not ok and fix:
+            print(f"     fix: {fix}")
+
+    # 1. broker HTTP health
+    try:
+        h = _req("/api/health")
+        ok = isinstance(h, dict) and h.get("ok") is True and bool(h.get("build_sha"))
+        detail = (f"ok:true build_sha={h.get('build_sha')}" if ok
+                  else f"unexpected response: {json.dumps(h)[:100]}")
+    except Exception as e:
+        ok, detail = False, f"unreachable ({e})"
+    check("broker health", ok, detail,
+          f"launchctl load {BROKER_PLIST} (run `mesh status` to spot squatters)")
+
+    # 2. ports 8765 + 8766 owned by the same broker process (any family)
+    http_own, ws_own = _port_owners(8765), _port_owners(8766)
+    pids = {p for p, _, _ in http_own} | {p for p, _, _ in ws_own}
+    broker_pid = _launchd_pid(BROKER_LABEL)
+    if not http_own or not ws_own:
+        missing = " ".join(str(p) for p, o in ((8765, http_own), (8766, ws_own)) if not o)
+        check("port ownership", False, f"nothing listening on port(s) {missing}",
+              f"launchctl load {BROKER_PLIST}")
+    elif len(pids) == 1:
+        pid, cmd = http_own[0][0], http_own[0][1]
+        if broker_pid is not None and pid != broker_pid:
+            check("port ownership", False,
+                  f"pid {pid} ({cmd}) owns 8765+8766 but launchd broker is pid {broker_pid}",
+                  f"another process is squatting — kill {pid} ({cmd})")
+        else:
+            check("port ownership", True, f"8765+8766 both owned by pid {pid} ({cmd})")
+    else:
+        squat = [(p, c, a) for p, c, a in http_own + ws_own if p != broker_pid]
+        squat_s = "; ".join(f"pid {p} ({c}) on {a}" for p, c, a in squat) or "split ownership"
+        check("port ownership", False, f"multiple owners: {squat_s}",
+              f"another process is squatting — kill {squat[0][0]} ({squat[0][1]})"
+              if squat else "restart the broker")
+
+    # 3. launchd broker service loaded
+    rc, _out = _run(["launchctl", "list", BROKER_LABEL])
+    check("launchd broker", rc == 0,
+          f"{BROKER_LABEL} loaded (pid {broker_pid})" if rc == 0
+          else f"{BROKER_LABEL} not loaded",
+          f"launchctl load {BROKER_PLIST}")
+
+    # 4. tunnel process running
+    rc, out = _run(["pgrep", "-f", "cloudflared tunnel"])
+    tpid = out.split()[0] if rc == 0 and out.split() else None
+    check("tunnel process", tpid is not None,
+          f"cloudflared running (pid {tpid})" if tpid else "no cloudflared tunnel process",
+          f"launchctl kickstart -k gui/{os.getuid()}/{TUNNEL_LABEL}")
+
+    # 5. tunnel URL actually fronts OUR broker (WS server answers plain HTTP with 426)
+    url = os.environ.get("TUNNEL_URL") or _session_env("TUNNEL_URL")
+    if not url:
+        broker_url = os.environ.get("BROKER_URL") or _session_env("BROKER_URL") or ""
+        url = broker_url.replace("wss://", "https://", 1) if broker_url else None
+    if not url:
+        check("tunnel url", False, "no TUNNEL_URL in env or session.env",
+              "restart tunnel and re-run scripts/mesh-invite")
+    else:
+        _, code = _run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                        "--max-time", "8", url])
+        code = code.strip() or "no response"
+        check("tunnel url", code == "426",
+              f"{url} -> {code}" + (" (our broker's WS upgrade reply)" if code == "426" else ""),
+              "tunnel URL is stale — restart tunnel and re-run scripts/mesh-invite")
+
+    # 6. launchd tunnel service (a stale LastExitStatus with a live PID is fine —
+    #    e.g. 137/SIGKILL from a past restart; launchd encodes it as 137<<8)
+    rc, out = _run(["launchctl", "list", TUNNEL_LABEL])
+    pid_m = re.search(r'"PID"\s*=\s*(\d+)', out)
+    exit_m = re.search(r'"LastExitStatus"\s*=\s*(\d+)', out)
+    last = int(exit_m.group(1)) if exit_m else 0
+    last_s = f", last exit {last >> 8 if last and last % 256 == 0 else last}" if last else ""
+    if rc == 0 and pid_m:
+        check("launchd tunnel", True,
+              f"{TUNNEL_LABEL} loaded, running (pid {pid_m.group(1)}{last_s})")
+    elif rc == 0:
+        check("launchd tunnel", False, f"{TUNNEL_LABEL} loaded but not running{last_s}",
+              f"launchctl kickstart -k gui/{os.getuid()}/{TUNNEL_LABEL}")
+    else:
+        check("launchd tunnel", False, f"{TUNNEL_LABEL} not loaded",
+              "launchctl load ~/Library/LaunchAgents/com.voidlabs.agent-mesh-tunnel.plist")
+
+    # 7. MESH_TOKEN present
+    src = "env" if os.environ.get("MESH_TOKEN") else "session.env"
+    check("mesh token", TOKEN is not None,
+          f"set ({src})" if TOKEN else "MISSING from env and ~/.agent-mesh/session.env",
+          "export MESH_TOKEN or add it to ~/.agent-mesh/session.env")
+
+    failed = results.count(False)
+    print(f"{len(results) - failed}/{len(results)} checks passed")
+    return 0 if failed == 0 else 1
 
 
 def main() -> int:
@@ -222,8 +538,9 @@ def main() -> int:
         print(__doc__)
         return 0
     cmd, rest = args[0], args[1:]
-    table = {"send": cmd_send, "inbox": cmd_inbox, "hook": cmd_hook,
-             "wait": cmd_wait, "who": cmd_who, "status": cmd_status}
+    table = {"send": cmd_send, "ask": cmd_ask, "inbox": cmd_inbox, "hook": cmd_hook,
+             "wait": cmd_wait, "focus": cmd_focus, "handoff": cmd_handoff,
+             "who": cmd_who, "status": cmd_status, "doctor": cmd_doctor}
     fn = table.get(cmd)
     if not fn:
         print(f"unknown command: {cmd}\n{__doc__}", file=sys.stderr)
