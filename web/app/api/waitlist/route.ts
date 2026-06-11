@@ -1,14 +1,21 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
-
 export async function POST(request: NextRequest) {
+  // Client is created per-request, not at module scope: a module-scope
+  // createClient crashes the build when env vars are absent (page-data collection).
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !key) {
+    return NextResponse.json({ error: 'Waitlist not configured' }, { status: 503 })
+  }
+  const supabase = createClient(url, key)
+
   try {
-    const { email, source = 'landing' } = await request.json()
+    const { email, source: rawSource } = await request.json()
+    // Must match the table's CHECK constraint or the insert 500s.
+    const ALLOWED_SOURCES = ['landing', 'demo', 'community']
+    const source = ALLOWED_SOURCES.includes(rawSource) ? rawSource : 'landing'
 
     if (!email || typeof email !== 'string') {
       return NextResponse.json(
@@ -25,11 +32,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { data, error } = await supabase
+    // No .select() after insert: the anon RLS policy allows INSERT only, so a
+    // RETURNING clause would be blocked and fail the whole request.
+    const { error } = await supabase
       .from('waitlist')
       .insert([{ email, source }])
-      .select()
-      .single()
 
     if (error) {
       if (error.code === '23505') {
@@ -41,7 +48,7 @@ export async function POST(request: NextRequest) {
       throw error
     }
 
-    return NextResponse.json({ success: true, data }, { status: 201 })
+    return NextResponse.json({ success: true }, { status: 201 })
   } catch (error) {
     console.error('Waitlist error:', error)
     return NextResponse.json(
